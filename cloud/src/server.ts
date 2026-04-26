@@ -18,6 +18,7 @@ import { config } from './config.js';
 import { requireApiKey } from './middleware/apiKey.js';
 import { ocrImage } from './services/vision.js';
 import { analyzeImage } from './services/analyze.js';
+import { synthesizeAcrossImages, type SynthesizeItem } from './services/synthesize.js';
 
 function log(...args: unknown[]): void {
   console.log(`[${new Date().toISOString()}]`, ...args);
@@ -105,6 +106,49 @@ app.post(
     } catch (e) {
       const err = e as Error;
       log('[analyze] error', err.message);
+      res.status(500).json({ error: err.message });
+    }
+  },
+);
+
+/**
+ * Cross-image synthesis pass.
+ *
+ * The extension calls this AFTER the per-image /api/analyze loop completes,
+ * passing { items: [{ index, ocr, analysis }] }. We hand it to OpenRouter
+ * without re-uploading any images, so the call is text-only and small.
+ */
+app.post(
+  '/api/analyze/synthesize',
+  requireApiKey,
+  express.json({ limit: '5mb' }),
+  async (req: Request, res: Response) => {
+    const body = req.body as { items?: unknown };
+    const raw = Array.isArray(body?.items) ? body.items : [];
+    const items: SynthesizeItem[] = raw
+      .map((it, i) => {
+        const obj = (it ?? {}) as Record<string, unknown>;
+        return {
+          index: typeof obj.index === 'number' ? obj.index : i + 1,
+          ocr: typeof obj.ocr === 'string' ? obj.ocr : '',
+          analysis: typeof obj.analysis === 'string' ? obj.analysis : '',
+        };
+      })
+      .filter((it) => it.analysis.length > 0 || it.ocr.length > 0);
+
+    if (items.length === 0) {
+      res.status(400).json({ error: 'items[] is required' });
+      return;
+    }
+
+    log('[synthesize] start', items.length, 'items');
+    try {
+      const synthesis = await synthesizeAcrossImages(items);
+      log('[synthesize] done', synthesis.length, 'chars');
+      res.json({ synthesis });
+    } catch (e) {
+      const err = e as Error;
+      log('[synthesize] error', err.message);
       res.status(500).json({ error: err.message });
     }
   },
