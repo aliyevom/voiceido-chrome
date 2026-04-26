@@ -480,18 +480,30 @@ async function handleCloudJob(job: CloudJob): Promise<void> {
       : `${label}: contacting backend…`,
   );
 
-  const parts: string[] = [];
+  // Per-image pass.
+  const perImage: Array<{ index: number; text: string }> = [];
   for (let i = 0; i < state.rendered.length; i++) {
     const item = state.rendered[i];
     if (!item) continue;
     const text = await callCloudJob(job, item.blob);
-    if (state.rendered.length > 1) {
-      parts.push(`--- Image ${i + 1} of ${state.rendered.length} ---\n\n${text}`);
-    } else {
-      parts.push(text);
-    }
+    perImage.push({ index: i + 1, text });
   }
-  const combined = parts.join('\n\n').trim() || `(${label} returned empty result)`;
+
+  // For Analyze with 2+ images, run the cross-image synthesis pass on the
+  // backend so the saved .txt opens with one unified essay covering every
+  // image, then keeps the per-image detail underneath.
+  let synthesis = '';
+  if (job === 'analyze' && perImage.length > 1) {
+    toast('Analyze: synthesising across images…');
+    synthesis = await callSynthesize(
+      perImage.map((p) => ({ index: p.index, analysis: p.text })),
+    ).catch((e: unknown) => {
+      console.warn('[analyze] synthesis failed', e);
+      return '';
+    });
+  }
+
+  const combined = formatCombinedText(label, perImage, synthesis);
 
   const blob = new Blob([combined], { type: 'text/plain;charset=utf-8' });
   const url = URL.createObjectURL(blob);
@@ -506,6 +518,64 @@ async function handleCloudJob(job: CloudJob): Promise<void> {
   } finally {
     setTimeout(() => URL.revokeObjectURL(url), 30_000);
   }
+}
+
+function formatCombinedText(
+  label: string,
+  perImage: Array<{ index: number; text: string }>,
+  synthesis: string,
+): string {
+  if (perImage.length === 0) return `(${label} returned empty result)`;
+
+  if (perImage.length === 1) {
+    return perImage[0]!.text.trim() || `(${label} returned empty result)`;
+  }
+
+  const total = perImage.length;
+  const sections: string[] = [];
+
+  if (synthesis.trim()) {
+    sections.push(
+      `===== UNIFIED ANALYSIS (essay across all ${total} images) =====`,
+      '',
+      synthesis.trim(),
+      '',
+      '===== Per-Image Detail =====',
+      '',
+    );
+  }
+
+  sections.push(
+    perImage
+      .map((p) => `--- Image ${p.index} of ${total} ---\n\n${p.text.trim()}`)
+      .join('\n\n'),
+  );
+
+  return sections.join('\n').trim() || `(${label} returned empty result)`;
+}
+
+async function callSynthesize(
+  items: Array<{ index: number; analysis: string }>,
+): Promise<string> {
+  const { baseUrl, apiKey } = state.apiSettings;
+  const endpoint = `${baseUrl}/api/analyze/synthesize`;
+  const res = await fetch(endpoint, {
+    method: 'POST',
+    headers: {
+      'X-API-Key': apiKey,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ items }),
+  });
+  if (!res.ok) {
+    const text = await safeReadText(res);
+    throw new Error(
+      `synthesize failed (${res.status} ${res.statusText})${text ? `: ${text}` : ''}`,
+    );
+  }
+  const data = (await res.json()) as { synthesis?: string; error?: string };
+  if (data.error) throw new Error(data.error);
+  return data.synthesis ?? '';
 }
 
 async function callCloudJob(job: CloudJob, image: Blob): Promise<string> {
