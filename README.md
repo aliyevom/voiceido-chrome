@@ -1,17 +1,4 @@
-# Full Page Voiceido
-
-Full Page Voiceido is a **Manifest V3 + TypeScript Chrome extension** for capturing full-page browser screenshots, previewing the result, and optionally sending the captured image to a backend service for OCR and AI-based analysis.
-
-The project is structured as two main parts:
-
-1. **Chrome extension frontend** — handles capture, preview, local export, and user interaction.
-2. **Cloud backend** — handles OCR and AI analysis when the user requests it.
-
-The goal of the architecture is to keep browser-side capture fast and lightweight while moving heavier text extraction and multimodal analysis into a separate backend service.
-
----
-
-## What It Does
+# Full Page Voiceido is a **Manifest V3 + TypeScript Chrome extension**
 
 Full Page Voiceido allows a user to capture the content of the active browser tab as an image.
 
@@ -77,3 +64,18 @@ The core screenshot and export flow works locally inside the browser. OCR and AI
        ├── Generate PDF locally
        ├── Send to OCR API
        └── Send to Analyze API
+```
+
+---
+
+## Contributing
+
+This repo follows trunk-based development: `main` is always releasable,
+every change lands via a Pull Request, and CI must be green before merge.
+See [`CONTRIBUTING.md`](./CONTRIBUTING.md) for branch naming, the local
+checks CI also runs, and the recommended branch-protection rules for
+`main`.
+
+Privacy disclosures are tracked in [`PRIVACY.md`](./PRIVACY.md) and must be
+updated in the same PR as any change that affects how user data is
+captured, stored, or transmitted.

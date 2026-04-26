@@ -1,0 +1,92 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  extension:
+    name: Extension (typecheck + build + package)
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Build (production bundle)
+        run: npm run build
+
+      - name: Verify Chrome Web Store packaging
+        run: npm run package
+
+      - name: Verify manifest is at ZIP root
+        run: |
+          set -euo pipefail
+          ZIP=$(ls release/*.zip | head -n1)
+          echo "Inspecting $ZIP"
+          if ! unzip -l "$ZIP" | awk '{print $NF}' | grep -qx "manifest.json"; then
+            echo "::error::manifest.json must be at the root of the upload ZIP"
+            exit 1
+          fi
+          echo "OK: manifest.json present at ZIP root"
+
+      - name: Upload built ZIP as artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: extension-zip
+          path: release/*.zip
+          if-no-files-found: error
+          retention-days: 14
+
+  cloud:
+    name: Cloud microservice (typecheck + build)
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+
+    defaults:
+      run:
+        working-directory: cloud
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: cloud/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Typecheck
+        run: npx tsc --noEmit
+
+      - name: Build
+        run: npm run build

@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Zips dist/ into release/full-page-voiceido-<version>.zip for Web Store upload.
+// Zips dist/ into release/voiceido-full-page-capture-<version>.zip for Web Store upload.
 
 import { mkdir, readFile } from 'node:fs/promises';
 import { execSync } from 'node:child_process';
@@ -14,7 +14,7 @@ const releaseDir = resolve(root, 'release');
 const pkg = JSON.parse(await readFile(resolve(root, 'package.json'), 'utf8'));
 await mkdir(releaseDir, { recursive: true });
 
-const zipPath = resolve(releaseDir, `full-page-voiceido-${pkg.version}.zip`);
+const zipPath = resolve(releaseDir, `voiceido-full-page-capture-${pkg.version}.zip`);
 
 // Use system zip — Chrome Web Store accepts standard ZIPs and avoids
 // adding an archiver dependency just for packaging.
