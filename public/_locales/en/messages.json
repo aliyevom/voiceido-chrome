@@ -1,11 +1,11 @@
 {
   "extension_name": {
-    "message": "Full Page Voiceido",
+    "message": "Voiceido - Full Page Capture",
     "description": "Name of the extension shown in the browser UI."
   },
   "extension_description": {
-    "message": "Capture full-page screenshots of any web page. Export as PNG or PDF locally, or send to a self-hosted backend for OCR and AI analysis.",
-    "description": "Description shown in the Chrome Web Store and chrome://extensions."
+    "message": "Full-page screenshots of any web page. Export as PNG or PDF, or send to a self-hosted backend for OCR and AI analysis.",
+    "description": "Description shown in the Chrome Web Store and chrome://extensions. Must be <= 132 chars."
   },
   "action_title": {
     "message": "Capture full page (Alt+Shift+P)",
@@ -34,7 +34,7 @@
     }
   },
   "popup_invalid_url": {
-    "message": "Full Page Voiceido cannot run on this URL. Try a regular http(s) page or a file:// URL.",
+    "message": "Voiceido cannot run on this URL. Try a regular http(s) page or a file:// URL.",
     "description": "Error shown for unsupported URLs."
   },
   "popup_generic_error": {
