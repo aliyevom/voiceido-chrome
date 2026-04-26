@@ -4,7 +4,7 @@
     "description": "Name of the extension shown in the browser UI."
   },
   "extension_description": {
-    "message": "Capture an entire web page as one (or multiple) high-fidelity PNG screenshots — no extra permissions required.",
+    "message": "Capture full-page screenshots of any web page. Export as PNG or PDF locally, or send to a self-hosted backend for OCR and AI analysis.",
     "description": "Description shown in the Chrome Web Store and chrome://extensions."
   },
   "action_title": {
