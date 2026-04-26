@@ -15,55 +15,27 @@ The extension supports:
 The core screenshot and export flow works locally inside the browser. OCR and AI analysis require the backend service.
 
 ---
-
 ## High-Level Architecture
 
-```text
-┌──────────────┐
-│ Popup UI     │
-│ User action  │
-└──────┬───────┘
-       │
-       │ Start capture
-       ▼
-┌────────────────────┐
-│ Service Worker     │
-│ Capture coordinator│
-└──────┬─────────────┘
-       │
-       │ Inject capture script
-       ▼
-┌────────────────────┐
-│ Content Script     │
-│ Page measurement   │
-│ Scroll control     │
-└──────┬─────────────┘
-       │
-       │ Capture visible tiles
-       ▼
-┌────────────────────┐
-│ Chrome Capture API │
-│ Viewport images    │
-└──────┬─────────────┘
-       │
-       │ Image tiles
-       ▼
-┌────────────────────┐
-│ Offscreen Document │
-│ Canvas stitching   │
-└──────┬─────────────┘
-       │
-       │ Final image bundle
-       ▼
-┌────────────────────┐
-│ Preview Page       │
-│ Export + analysis  │
-└──────┬─────────────┘
-       │
-       ├── Save PNG locally
-       ├── Generate PDF locally
-       ├── Send to OCR API
-       └── Send to Analyze API
+```mermaid
+flowchart TD
+    A["Popup UI<br/>Capture mode control<br/>User-triggered flow"]
+    B["Extension Service Worker<br/>MV3 event coordinator<br/>Tab + capture orchestration"]
+    C["Content Script<br/>DOM + viewport measurement<br/>Scroll container detection<br/>Tile position planning"]
+    D["Chrome Tabs Capture API<br/>Visible viewport snapshots<br/>Browser-managed capture"]
+    E["Offscreen Document<br/>Canvas-based tile stitching<br/>Image normalization<br/>Oversize capture handling"]
+    F["Capture Preview Page<br/>Local export surface<br/>Optional AI/ML workflows"]
+
+    A -->|"Start capture request"| B
+    B -->|"Inject capture runtime"| C
+    C -->|"Scroll and request frames"| D
+    D -->|"Encoded image tiles"| E
+    E -->|"Final capture artifact"| F
+
+    F -->|"Export image locally"| G["Local image export"]
+    F -->|"Generate document locally"| H["Local document generation"]
+    F -->|"Send image to OCR pipeline"| I["OCR pipeline"]
+    F -->|"Send image to AI analysis pipeline"| J["AI analysis pipeline"]
 ```
 
 ---
