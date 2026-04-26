@@ -1,0 +1,203 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Voiceido — Capture preview</title>
+    <link rel="icon" href="../icons/icon32.png" type="image/png" />
+    <link rel="stylesheet" href="capture.css" />
+  </head>
+  <body>
+    <header class="toolbar" role="banner">
+      <div class="brand">
+        <img src="../icons/icon32.png" alt="" width="22" height="22" />
+        <span class="brand-name">Voiceido</span>
+        <span class="brand-sep" aria-hidden="true">·</span>
+        <span class="source" id="source-label" title=""></span>
+      </div>
+
+      <nav class="actions" aria-label="Download options">
+        <button
+          type="button"
+          class="action"
+          id="btn-pdf"
+          data-tip="Download as multi-page PDF"
+        >
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path
+              d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8l-5-5z"
+              fill="currentColor"
+              opacity=".25"
+            />
+            <path d="M14 3v5h5" stroke="currentColor" stroke-width="1.5" fill="none" />
+            <text
+              x="12"
+              y="17"
+              text-anchor="middle"
+              font-size="6.5"
+              font-weight="700"
+              fill="currentColor"
+            >
+              PDF
+            </text>
+          </svg>
+          <span>PDF</span>
+        </button>
+
+        <button
+          type="button"
+          class="action"
+          id="btn-image"
+          data-tip="Download stitched PNG image(s)"
+        >
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <rect
+              x="3"
+              y="5"
+              width="18"
+              height="14"
+              rx="2"
+              fill="currentColor"
+              opacity=".25"
+            />
+            <circle cx="9" cy="11" r="1.5" fill="currentColor" />
+            <path
+              d="M3 17l5-5 4 4 3-3 6 5"
+              stroke="currentColor"
+              stroke-width="1.5"
+              fill="none"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            />
+          </svg>
+          <span>Image</span>
+        </button>
+
+        <button
+          type="button"
+          class="action"
+          id="btn-ocr"
+          data-tip="Run cloud OCR and download as .txt"
+        >
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <rect
+              x="3"
+              y="5"
+              width="18"
+              height="14"
+              rx="2"
+              fill="currentColor"
+              opacity=".25"
+            />
+            <path
+              d="M6 9h12M6 12h9M6 15h6"
+              stroke="currentColor"
+              stroke-width="1.5"
+              stroke-linecap="round"
+            />
+          </svg>
+          <span>OCR · txt</span>
+        </button>
+
+        <button
+          type="button"
+          class="action"
+          id="btn-analyze"
+          data-tip="Run diagram analysis and download as .txt"
+        >
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path
+              d="M4 4h6v6H4zM14 4h6v6h-6zM4 14h6v6H4zM14 14h6v6h-6z"
+              fill="currentColor"
+              opacity=".25"
+            />
+            <path
+              d="M10 7h4M7 10v4M17 10v4M10 17h4"
+              stroke="currentColor"
+              stroke-width="1.5"
+              stroke-linecap="round"
+            />
+          </svg>
+          <span>Analyze · txt</span>
+        </button>
+
+        <button
+          type="button"
+          class="icon-only"
+          id="btn-settings"
+          aria-label="Backend API settings"
+          data-tip="Backend API settings"
+        >
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path
+              d="M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8zm9.4 4l-1.7-1c.1-.6.1-1 .1-1s0-.4-.1-1l1.7-1-2-3.4-1.9.7c-.6-.5-1.3-.9-2-1.2L15.5 2h-7l-.5 2.1c-.7.3-1.4.7-2 1.2L4 4.6 2 8l1.7 1c-.1.6-.1 1-.1 1s0 .4.1 1L2 12l2 3.4 1.9-.7c.6.5 1.3.9 2 1.2L8.5 18h7l.5-2.1c.7-.3 1.4-.7 2-1.2l1.9.7L22 12z"
+              fill="currentColor"
+              opacity=".7"
+            />
+          </svg>
+        </button>
+      </nav>
+    </header>
+
+    <main class="canvas" role="main" aria-label="Captured image preview">
+      <div class="page-info" id="page-info" hidden></div>
+      <div class="image-stack" id="image-stack" aria-busy="true">
+        <p class="loading">Loading capture…</p>
+      </div>
+    </main>
+
+    <!-- Status toast: shown for short-lived messages (downloads, errors). -->
+    <div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
+
+    <!-- Settings dialog: API base URL + API key for cloud OCR / Analyze. -->
+    <dialog id="settings-dialog" class="dialog" aria-labelledby="settings-title">
+      <form method="dialog" id="settings-form">
+        <h2 id="settings-title">Backend API settings</h2>
+        <p class="dialog-help">
+          OCR and Analyze run on a Cloud Run service. Paste the URL printed by
+          <code>cloud/deploy.sh</code> and the API key you set during deploy.
+        </p>
+
+        <label class="field">
+          <span>API base URL</span>
+          <input
+            type="url"
+            id="field-url"
+            placeholder="https://voiceido-api-xyz.run.app"
+            autocomplete="off"
+            spellcheck="false"
+            required
+          />
+        </label>
+
+        <label class="field">
+          <span>API key (X-API-Key)</span>
+          <input
+            type="password"
+            id="field-key"
+            autocomplete="off"
+            spellcheck="false"
+            required
+          />
+        </label>
+
+        <p class="dialog-help dialog-test" id="settings-test"></p>
+
+        <div class="dialog-actions">
+          <button type="button" id="settings-test-btn" class="dialog-btn">
+            Test connection
+          </button>
+          <span class="dialog-spacer"></span>
+          <button type="button" id="settings-cancel" class="dialog-btn ghost">
+            Cancel
+          </button>
+          <button type="submit" id="settings-save" class="dialog-btn primary">
+            Save
+          </button>
+        </div>
+      </form>
+    </dialog>
+
+    <script type="module" src="capture.js"></script>
+  </body>
+</html>

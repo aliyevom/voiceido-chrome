@@ -1,0 +1,29 @@
+{
+  "name": "voiceido-cloud-api",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Cloud Run microservice exposing OCR (GCP Vision) and Analyze (OCR + OpenRouter) for the Voiceido capture extension.",
+  "scripts": {
+    "dev": "tsx watch src/server.ts",
+    "build": "tsc",
+    "start": "node dist/server.js"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "@google-cloud/vision": "^4.3.2",
+    "cors": "^2.8.5",
+    "express": "^4.21.1",
+    "multer": "^1.4.5-lts.1"
+  },
+  "devDependencies": {
+    "@types/cors": "^2.8.17",
+    "@types/express": "^4.17.21",
+    "@types/multer": "^1.4.12",
+    "@types/node": "^20.16.10",
+    "tsx": "^4.19.1",
+    "typescript": "^5.6.2"
+  }
+}

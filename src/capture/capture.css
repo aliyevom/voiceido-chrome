@@ -1,0 +1,489 @@
+/* GoFullPage-style preview: dark slate toolbar fixed at top, soft gray
+   canvas below, action buttons on the right. Optimised for laptop screens
+   but degrades cleanly on narrow windows. */
+
+:root {
+  --toolbar-bg: #1f2230;
+  --toolbar-fg: #f4f5fa;
+  --toolbar-muted: rgba(244, 245, 250, 0.6);
+  --toolbar-hover: rgba(255, 255, 255, 0.08);
+  --toolbar-active: rgba(96, 165, 250, 0.18);
+  --toolbar-border: rgba(255, 255, 255, 0.08);
+  --canvas-bg: #e9ebf2;
+  --image-shadow: 0 4px 14px rgba(20, 24, 38, 0.12);
+  --accent: #3b82f6;
+  --accent-strong: #2563eb;
+  --error: #ef4444;
+  --success: #10b981;
+  --radius: 8px;
+  --toolbar-height: 56px;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --canvas-bg: #11141d;
+    --image-shadow: 0 4px 18px rgba(0, 0, 0, 0.5);
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+  font-family:
+    -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial,
+    sans-serif;
+  background: var(--canvas-bg);
+  color: #1a1d29;
+}
+
+@media (prefers-color-scheme: dark) {
+  body {
+    color: #e7eaf3;
+  }
+}
+
+/* ------------------------------- Toolbar ------------------------------- */
+
+.toolbar {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: var(--toolbar-height);
+  padding: 0 14px;
+  background: var(--toolbar-bg);
+  color: var(--toolbar-fg);
+  border-bottom: 1px solid var(--toolbar-border);
+  box-shadow: 0 1px 0 rgba(0, 0, 0, 0.15);
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.brand-name {
+  font-weight: 600;
+  font-size: 14px;
+  letter-spacing: 0.01em;
+}
+
+.brand-sep {
+  color: var(--toolbar-muted);
+}
+
+.source {
+  color: var(--toolbar-muted);
+  font-size: 13px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 50vw;
+}
+
+.actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.action,
+.icon-only {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  height: 36px;
+  min-width: 36px;
+  padding: 0 12px;
+  background: transparent;
+  color: var(--toolbar-fg);
+  border: 1px solid transparent;
+  border-radius: 6px;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition:
+    background 120ms ease,
+    border-color 120ms ease,
+    color 120ms ease;
+}
+
+.icon-only {
+  padding: 0 8px;
+}
+
+.action svg,
+.icon-only svg {
+  width: 18px;
+  height: 18px;
+  flex-shrink: 0;
+  transition: opacity 120ms ease;
+}
+
+.action:hover:not(:disabled),
+.icon-only:hover:not(:disabled) {
+  background: var(--toolbar-hover);
+}
+
+.action:focus-visible,
+.icon-only:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* When a button is mid-job we hide both the glyph and the label and show
+   a single centered spinner — matches GoFullPage / Cursor IDE conventions
+   and keeps the user from clicking the same job twice. */
+.action.busy,
+.icon-only.busy {
+  background: var(--toolbar-active);
+  cursor: progress;
+  pointer-events: none;
+}
+
+.action.busy svg,
+.action.busy span,
+.icon-only.busy svg {
+  opacity: 0;
+}
+
+.action.busy::after,
+.icon-only.busy::after {
+  content: '';
+  position: absolute;
+  width: 16px;
+  height: 16px;
+  top: 50%;
+  left: 50%;
+  margin-top: -8px;
+  margin-left: -8px;
+  border: 2px solid currentColor;
+  border-top-color: transparent;
+  border-radius: 50%;
+  animation: spin 0.7s linear infinite;
+}
+
+.action:disabled,
+.icon-only:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+/* When busy we don't want the disabled fade — the spinner is the
+   feedback, the dimming would muddle it. */
+.action.busy:disabled,
+.icon-only.busy:disabled {
+  opacity: 1;
+}
+
+[data-tip] {
+  position: relative;
+}
+
+[data-tip]:hover::after {
+  content: attr(data-tip);
+  position: absolute;
+  bottom: -32px;
+  right: 0;
+  background: rgba(15, 17, 25, 0.95);
+  color: #fff;
+  font-size: 12px;
+  font-weight: 500;
+  padding: 5px 9px;
+  border-radius: 4px;
+  white-space: nowrap;
+  pointer-events: none;
+  z-index: 20;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* ------------------------------- Canvas -------------------------------- */
+
+.canvas {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 28px 24px 64px;
+  min-height: calc(100vh - var(--toolbar-height));
+}
+
+.page-info {
+  margin-bottom: 12px;
+  padding: 6px 12px;
+  background: rgba(59, 130, 246, 0.12);
+  color: var(--accent-strong);
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.image-stack {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+}
+
+.image-stack img {
+  max-width: 100%;
+  height: auto;
+  background: white;
+  box-shadow: var(--image-shadow);
+  border-radius: 4px;
+}
+
+.image-stack .loading {
+  margin: 80px auto;
+  font-size: 14px;
+  color: var(--toolbar-muted);
+}
+
+.image-stack .error {
+  margin: 80px auto;
+  padding: 16px 20px;
+  background: rgba(239, 68, 68, 0.08);
+  color: var(--error);
+  border: 1px solid rgba(239, 68, 68, 0.3);
+  border-radius: 8px;
+  font-size: 14px;
+  max-width: 480px;
+  text-align: center;
+}
+
+.image-stack .error code {
+  display: inline-block;
+  margin-top: 8px;
+  padding: 2px 6px;
+  background: rgba(0, 0, 0, 0.05);
+  border-radius: 3px;
+  font-size: 12px;
+}
+
+/* -------------------------------- Toast -------------------------------- */
+
+.toast {
+  position: fixed;
+  bottom: 24px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: rgba(15, 17, 25, 0.95);
+  color: white;
+  padding: 10px 16px;
+  border-radius: 6px;
+  font-size: 13px;
+  font-weight: 500;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.3);
+  z-index: 50;
+  max-width: 90vw;
+  animation: toast-in 200ms ease;
+}
+
+.toast.error {
+  background: var(--error);
+}
+
+.toast.success {
+  background: var(--success);
+}
+
+@keyframes toast-in {
+  from {
+    opacity: 0;
+    transform: translate(-50%, 8px);
+  }
+  to {
+    opacity: 1;
+    transform: translate(-50%, 0);
+  }
+}
+
+/* ------------------------------- Dialog -------------------------------- */
+
+.dialog {
+  border: none;
+  border-radius: 12px;
+  padding: 20px;
+  width: min(440px, 92vw);
+  background: white;
+  color: #1a1d29;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.25);
+}
+
+@media (prefers-color-scheme: dark) {
+  .dialog {
+    background: #1c1f2c;
+    color: #e7eaf3;
+  }
+}
+
+.dialog::backdrop {
+  background: rgba(15, 17, 25, 0.45);
+}
+
+.dialog h2 {
+  margin: 0 0 6px;
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.dialog-help {
+  margin: 0 0 14px;
+  font-size: 13px;
+  color: rgba(26, 29, 41, 0.65);
+  line-height: 1.45;
+}
+
+@media (prefers-color-scheme: dark) {
+  .dialog-help {
+    color: rgba(231, 234, 243, 0.65);
+  }
+}
+
+.dialog-help code {
+  background: rgba(59, 130, 246, 0.1);
+  padding: 1px 5px;
+  border-radius: 3px;
+  font-size: 12px;
+}
+
+.dialog-test {
+  margin-top: 4px;
+  min-height: 18px;
+}
+
+.dialog-test.error {
+  color: var(--error);
+}
+
+.dialog-test.success {
+  color: var(--success);
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: 12px;
+}
+
+.field span {
+  font-size: 12px;
+  font-weight: 500;
+  color: rgba(26, 29, 41, 0.7);
+}
+
+@media (prefers-color-scheme: dark) {
+  .field span {
+    color: rgba(231, 234, 243, 0.7);
+  }
+}
+
+.field input {
+  height: 34px;
+  padding: 0 10px;
+  border-radius: 6px;
+  border: 1px solid rgba(26, 29, 41, 0.18);
+  background: white;
+  color: inherit;
+  font: inherit;
+  font-size: 13px;
+}
+
+@media (prefers-color-scheme: dark) {
+  .field input {
+    background: #0f111a;
+    border-color: rgba(231, 234, 243, 0.2);
+  }
+}
+
+.field input:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+  border-color: var(--accent);
+}
+
+.dialog-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 16px;
+}
+
+.dialog-spacer {
+  flex: 1;
+}
+
+.dialog-btn {
+  height: 34px;
+  padding: 0 14px;
+  border-radius: 6px;
+  border: 1px solid rgba(26, 29, 41, 0.15);
+  background: white;
+  color: inherit;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+@media (prefers-color-scheme: dark) {
+  .dialog-btn {
+    background: #262a39;
+    border-color: rgba(231, 234, 243, 0.18);
+  }
+}
+
+.dialog-btn.ghost {
+  background: transparent;
+  border-color: transparent;
+}
+
+.dialog-btn.primary {
+  background: var(--accent);
+  color: white;
+  border-color: var(--accent);
+}
+
+.dialog-btn.primary:hover {
+  background: var(--accent-strong);
+  border-color: var(--accent-strong);
+}
+
+.dialog-btn:hover:not(:disabled) {
+  filter: brightness(0.96);
+}
+
+.dialog-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+@media (max-width: 760px) {
+  .source {
+    display: none;
+  }
+  .action span {
+    display: none;
+  }
+  .action {
+    padding: 0 8px;
+  }
+}

@@ -1,0 +1,48 @@
+{
+  "extension_name": {
+    "message": "Full Page Voiceido",
+    "description": "Name of the extension shown in the browser UI."
+  },
+  "extension_description": {
+    "message": "Capture an entire web page as one (or multiple) high-fidelity PNG screenshots — no extra permissions required.",
+    "description": "Description shown in the Chrome Web Store and chrome://extensions."
+  },
+  "action_title": {
+    "message": "Capture full page (Alt+Shift+P)",
+    "description": "Tooltip for the toolbar action."
+  },
+  "command_capture": {
+    "message": "Start full page capture",
+    "description": "Keyboard shortcut description."
+  },
+  "popup_progress_label": {
+    "message": "Capturing the full page",
+    "description": "Heading shown while capture is in progress."
+  },
+  "popup_progress_help": {
+    "message": "The finished image will open in a new tab. Please leave this window in focus until the bar finishes.",
+    "description": "Help text under the progress bar."
+  },
+  "popup_split_warning": {
+    "message": "This page is too large for a single image. It will be saved as $count$ images.",
+    "description": "Warning shown when the screenshot is split across multiple canvases.",
+    "placeholders": {
+      "count": {
+        "content": "$1",
+        "example": "3"
+      }
+    }
+  },
+  "popup_invalid_url": {
+    "message": "Full Page Voiceido cannot run on this URL. Try a regular http(s) page or a file:// URL.",
+    "description": "Error shown for unsupported URLs."
+  },
+  "popup_generic_error": {
+    "message": "Something went wrong while capturing the page. Reload the tab, ensure JavaScript is enabled, and try again.",
+    "description": "Generic capture error."
+  },
+  "popup_done_label": {
+    "message": "Capture complete — opening result tab(s)…",
+    "description": "Status shown when capture finishes successfully."
+  }
+}

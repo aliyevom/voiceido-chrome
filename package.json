@@ -1,0 +1,21 @@
+{
+  "name": "full-page-voiceido",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Capture an entire web page as one (or multiple) PNG screenshots — Manifest V3, TypeScript.",
+  "license": "MIT",
+  "type": "module",
+  "scripts": {
+    "clean": "rm -rf dist",
+    "icons": "node scripts/generate_icons.mjs",
+    "typecheck": "tsc --noEmit",
+    "build": "npm run clean && node scripts/build.mjs",
+    "build:watch": "node scripts/build.mjs --watch",
+    "package": "npm run build && node scripts/package.mjs"
+  },
+  "devDependencies": {
+    "@types/chrome": "^0.0.270",
+    "esbuild": "^0.23.1",
+    "typescript": "^5.5.4"
+  }
+}

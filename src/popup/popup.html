@@ -1,0 +1,174 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Voiceido — Full Page Capture</title>
+    <link rel="stylesheet" href="popup.css" />
+  </head>
+  <body>
+    <main id="app" aria-live="polite">
+      <header class="hero">
+        <div class="brand-mark" aria-hidden="true">
+          <img src="../icons/icon48.png" alt="" width="36" height="36" />
+        </div>
+        <div class="hero-text">
+          <h1 id="hero-title">Full Page Capture</h1>
+          <p id="hero-subtitle">Pick a mode, then run the capture.</p>
+        </div>
+      </header>
+
+      <section id="state-idle" class="state" role="status">
+        <div class="idle-card">
+          <strong>Ready to capture this tab.</strong>
+          <small>
+            Choose a mode below, then press <em>Run capture</em>. Voiceido
+            never captures automatically — you stay in control.
+          </small>
+        </div>
+        <button type="button" id="run-capture" class="button primary block">
+          Run capture
+        </button>
+      </section>
+
+      <section id="mode-selector" class="state state-settings" role="radiogroup" aria-label="Capture mode">
+        <label class="mode-option">
+          <input
+            type="radio"
+            name="capture-mode"
+            id="mode-fullPage"
+            value="fullPage"
+          />
+          <span class="mode-card">
+            <span class="mode-title">Full page</span>
+            <span class="mode-desc">Capture the entire scrollable document.</span>
+          </span>
+        </label>
+
+        <label class="mode-option">
+          <input
+            type="radio"
+            name="capture-mode"
+            id="mode-innerSection"
+            value="innerSection"
+          />
+          <span class="mode-card">
+            <span class="mode-title">Inner section</span>
+            <span class="mode-desc">Capture only the scroll box you last clicked inside.</span>
+          </span>
+        </label>
+      </section>
+
+      <section
+        id="state-picker"
+        class="state hidden"
+        role="status"
+      >
+        <div class="picker-card">
+          <div class="picker-ring-glyph" aria-hidden="true"></div>
+          <div class="picker-copy">
+            <strong>Pick a section in the page</strong>
+            <small>
+              Switch to the tab and hover the scroll box you want to capture
+              — a blue ring tracks your cursor. Click to confirm. Press
+              <kbd>Esc</kbd> to cancel.
+            </small>
+          </div>
+        </div>
+      </section>
+
+      <section
+        id="state-progress"
+        class="state state-active hidden"
+        aria-labelledby="hero-title"
+      >
+        <div class="progress" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
+          <div class="progress-bar" id="progress-bar"></div>
+        </div>
+        <p class="caption" id="progress-caption">Starting capture…</p>
+      </section>
+
+      <section id="settings" class="state state-settings">
+        <label class="toggle" for="toggle-expand-scrollables">
+          <input type="checkbox" id="toggle-expand-scrollables" />
+          <span class="toggle-track" aria-hidden="true">
+            <span class="toggle-thumb"></span>
+          </span>
+          <span class="toggle-text">
+            <strong>Expand inner scroll boxes</strong>
+            <small>
+              Full-page mode only. Reveal content trapped inside in-page
+              scroll containers (code previews, chats, embedded panes) before
+              capture.
+            </small>
+          </span>
+        </label>
+      </section>
+
+      <section id="state-split" class="state hidden" role="status">
+        <p class="warn">
+          <strong>Heads up:</strong>
+          This page is too large for a single image. It will be saved as
+          <span id="split-count">multiple</span> images.
+        </p>
+      </section>
+
+      <section id="state-complete" class="state hidden" role="status">
+        <p class="success">
+          <strong>Capture ready.</strong>
+          Opened a preview tab with <span id="complete-count">1</span>
+          image(s) — choose PDF, PNG, OCR, or Analyze from the toolbar there.
+        </p>
+      </section>
+
+      <section id="state-invalid" class="state hidden" role="alert">
+        <p class="error">
+          Voiceido cannot run on this page. Try a regular http(s) page or a
+          local file URL — the Chrome Web Store and chrome:// pages are
+          off-limits to extensions.
+        </p>
+      </section>
+
+      <section id="state-cancelled" class="state hidden" role="status">
+        <p class="info">
+          <strong>Capture cancelled.</strong>
+          Press <em>Choose section again</em> below to re-open the picker, or
+          switch mode above.
+        </p>
+      </section>
+
+      <section id="state-no-scroll" class="state hidden" role="alert">
+        <p class="error">
+          <strong>That isn't a scrollable container.</strong>
+          The element you picked has no internal scrollbar. Pick a different
+          element or switch the mode above to "Full page".
+        </p>
+      </section>
+
+      <section id="state-too-tall" class="state hidden" role="alert">
+        <p class="error">
+          <strong>The selected box is taller than the visible window.</strong>
+          Zoom out (Cmd/Ctrl&nbsp;+&nbsp;-) or enlarge the browser window so
+          the box fits, then try again.
+        </p>
+      </section>
+
+      <section id="state-error" class="state hidden" role="alert">
+        <p class="error">
+          Something went wrong while capturing the page. Try reloading the
+          tab and ensure JavaScript is enabled.
+        </p>
+        <p class="error-detail" id="error-detail"></p>
+      </section>
+
+      <footer class="footer">
+        <button type="button" id="retry-button" class="button hidden">
+          Try again
+        </button>
+        <span class="shortcut" aria-hidden="true">Alt&nbsp;+&nbsp;Shift&nbsp;+&nbsp;P</span>
+      </footer>
+    </main>
+
+    <script type="module" src="popup.js"></script>
+  </body>
+</html>
