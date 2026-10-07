@@ -9,6 +9,7 @@
  */
 
 import { planCanvases, type CanvasTilePlan } from '../utils/canvas_constraints';
+import { putCaptureImage } from '../utils/capture_store';
 import {
   MESSAGE_TARGETS,
   isMessageFor,
@@ -28,6 +29,11 @@ interface CanvasSlot extends CanvasTilePlan {
 }
 
 let canvases: CanvasSlot[] = [];
+/** World (CSS or device-px) size the current canvases were planned for. */
+let worldWidth = 0;
+let worldHeight = 0;
+/** After the first tile is painted, freeze the layout so later tiles cannot wipe it. */
+let layoutLocked = false;
 
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   if (isMessageFor<OffscreenInitRequest>(message, MESSAGE_TARGETS.offscreen, 'OFFSCREEN_INIT')) {
@@ -70,11 +76,11 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
       'OFFSCREEN_FINALIZE',
     )
   ) {
-    void handleFinalize()
+    void handleFinalize(message)
       .then((response) => sendResponse(response))
       .catch((error: unknown) => {
         console.error('[voiceido-offscreen] finalize failed', error);
-        sendResponse({ ok: false, pngs: [] } satisfies OffscreenFinalizeResponse);
+        sendResponse({ ok: false, images: [] } satisfies OffscreenFinalizeResponse);
       });
     return true;
   }
@@ -90,17 +96,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 
 function handleInit(message: OffscreenInitRequest): OffscreenInitResponse {
   handleReset();
-  const plans = planCanvases(message.totalWidth, message.totalHeight);
-  for (const plan of plans) {
-    const canvas = document.createElement('canvas');
-    canvas.width = plan.width;
-    canvas.height = plan.height;
-    const ctx = canvas.getContext('2d', { alpha: false });
-    if (!ctx) {
-      throw new Error('failed to acquire 2d context');
-    }
-    canvases.push({ ...plan, canvas, ctx });
-  }
+  allocateCanvases(message.totalWidth, message.totalHeight);
   return { ok: true, imageCount: canvases.length };
 }
 
@@ -125,24 +121,7 @@ async function handleDraw(message: OffscreenDrawRequest): Promise<OffscreenDrawR
     totalHeight *= scale;
   }
 
-  // If scaling pushed the total dimensions above what the planner used we
-  // need to re-plan the canvases to hold the larger image. This happens on
-  // first draw when devicePixelRatio > 1.
-  if (canvases.length === 1) {
-    const slot = canvases[0];
-    if (slot && (totalWidth > slot.width || totalHeight > slot.height)) {
-      handleReset();
-      const plans = planCanvases(totalWidth, totalHeight);
-      for (const plan of plans) {
-        const canvas = document.createElement('canvas');
-        canvas.width = plan.width;
-        canvas.height = plan.height;
-        const ctx = canvas.getContext('2d', { alpha: false });
-        if (!ctx) throw new Error('failed to acquire 2d context (re-plan)');
-        canvases.push({ ...plan, canvas, ctx });
-      }
-    }
-  }
+  layoutIfNeeded(totalWidth, totalHeight);
 
   for (const slot of canvases) {
     if (
@@ -155,15 +134,14 @@ async function handleDraw(message: OffscreenDrawRequest): Promise<OffscreenDrawR
     }
   }
 
+  layoutLocked = true;
   return { ok: true };
 }
 
 /**
  * Element-mode draw: crop the captured viewport image down to the element's
  * bounding box (after scaling for DPR / zoom), then paste it onto the
- * stitched canvas at the requested destination. The first call also seeds
- * canvas allocation if it hasn't happened yet (lazy init in element mode
- * because the service worker uses the same `OFFSCREEN_INIT` plumbing).
+ * stitched canvas at the requested destination.
  */
 async function handleDrawCrop(message: OffscreenDrawCropRequest): Promise<OffscreenDrawResponse> {
   if (canvases.length === 0) {
@@ -193,32 +171,12 @@ async function handleDrawCrop(message: OffscreenDrawCropRequest): Promise<Offscr
   if (srcY + srcH > image.height) srcH = image.height - srcY;
   if (srcW <= 0 || srcH <= 0) return { ok: true };
 
-  // Destination rect in stitched-canvas device pixels.
   const destX = message.destX * scale;
   const destY = message.destY * scale;
   const destW = srcW;
   const destH = srcH;
 
-  const totalWidthDev = message.totalWidth * scale;
-  const totalHeightDev = message.totalHeight * scale;
-
-  // Re-plan the canvases if the scaled output exceeds the originally
-  // planned (CSS-px-sized) layout — same trick as full-page mode.
-  if (canvases.length === 1) {
-    const slot = canvases[0];
-    if (slot && (totalWidthDev > slot.width || totalHeightDev > slot.height)) {
-      handleReset();
-      const plans = planCanvases(totalWidthDev, totalHeightDev);
-      for (const plan of plans) {
-        const canvas = document.createElement('canvas');
-        canvas.width = plan.width;
-        canvas.height = plan.height;
-        const ctx = canvas.getContext('2d', { alpha: false });
-        if (!ctx) throw new Error('failed to acquire 2d context (crop re-plan)');
-        canvases.push({ ...plan, canvas, ctx });
-      }
-    }
-  }
+  layoutIfNeeded(message.totalWidth * scale, message.totalHeight * scale);
 
   for (const slot of canvases) {
     const tileLeft = destX;
@@ -245,22 +203,76 @@ async function handleDrawCrop(message: OffscreenDrawCropRequest): Promise<Offscr
     }
   }
 
+  layoutLocked = true;
   return { ok: true };
 }
 
-async function handleFinalize(): Promise<OffscreenFinalizeResponse> {
+async function handleFinalize(message: OffscreenFinalizeRequest): Promise<OffscreenFinalizeResponse> {
   if (canvases.length === 0) {
-    return { ok: false, pngs: [] };
+    return { ok: false, images: [] };
   }
-  const pngs: string[] = [];
-  for (const slot of canvases) {
+  const images: Array<{ width: number; height: number }> = [];
+  for (let index = 0; index < canvases.length; index++) {
+    const slot = canvases[index];
+    if (!slot) continue;
     const blob = await canvasToBlob(slot.canvas);
-    pngs.push(await blobToBase64(blob));
+    console.log(
+      `[voiceido-offscreen] storing image ${index + 1}/${canvases.length} ` +
+        `${slot.canvas.width}×${slot.canvas.height} (${blob.size} bytes)`,
+    );
+    await putCaptureImage(message.id, index, {
+      blob,
+      width: slot.canvas.width,
+      height: slot.canvas.height,
+    });
+    images.push({ width: slot.canvas.width, height: slot.canvas.height });
+    slot.canvas.width = 0;
+    slot.canvas.height = 0;
   }
-  return { ok: true, pngs };
+  canvases = [];
+  return { ok: true, images };
 }
 
 function handleReset(): void {
+  clearCanvases();
+  worldWidth = 0;
+  worldHeight = 0;
+  layoutLocked = false;
+}
+
+/**
+ * Re-plan when DPR/zoom makes the real stitch larger than the CSS-px init.
+ * Only runs before the first tile is painted so later tiles cannot wipe work.
+ */
+function layoutIfNeeded(nextWorldWidth: number, nextWorldHeight: number): void {
+  if (layoutLocked) return;
+  if (
+    canvases.length > 0 &&
+    Math.abs(nextWorldWidth - worldWidth) < 1 &&
+    Math.abs(nextWorldHeight - worldHeight) < 1
+  ) {
+    return;
+  }
+  allocateCanvases(nextWorldWidth, nextWorldHeight);
+}
+
+function allocateCanvases(width: number, height: number): void {
+  clearCanvases();
+  worldWidth = width;
+  worldHeight = height;
+  for (const plan of planCanvases(width, height)) {
+    const canvas = document.createElement('canvas');
+    canvas.width = plan.width;
+    canvas.height = plan.height;
+    const ctx = canvas.getContext('2d', { alpha: false });
+    if (!ctx) {
+      throw new Error('failed to acquire 2d context');
+    }
+    canvases.push({ ...plan, canvas, ctx });
+  }
+}
+
+function clearCanvases(): void {
   for (const slot of canvases) {
     slot.canvas.width = 0;
     slot.canvas.height = 0;
@@ -284,17 +296,4 @@ function canvasToBlob(canvas: HTMLCanvasElement): Promise<Blob> {
       else reject(new Error('canvas.toBlob returned null'));
     }, 'image/png');
   });
-}
-
-async function blobToBase64(blob: Blob): Promise<string> {
-  const buffer = await blob.arrayBuffer();
-  const bytes = new Uint8Array(buffer);
-  // Encode in chunks to avoid blowing the call stack on very large PNGs.
-  const chunkSize = 0x8000;
-  let binary = '';
-  for (let i = 0; i < bytes.length; i += chunkSize) {
-    const sub = bytes.subarray(i, i + chunkSize);
-    binary += String.fromCharCode(...sub);
-  }
-  return btoa(binary);
 }
