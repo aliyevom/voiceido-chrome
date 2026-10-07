@@ -24,6 +24,8 @@ import {
   type CaptureFailureCode,
   type CaptureOptions,
   type CaptureResultBundle,
+  type CaptureFocusPartRequest,
+  type CaptureFocusPartResponse,
   type CaptureSessionGetRequest,
   type CaptureSessionGetResponse,
   type CaptureSessionReleaseRequest,
@@ -42,13 +44,14 @@ import {
   type StartCaptureRequest,
 } from '../utils/messages';
 import { buildScreenshotFilename, isCapturableUrl } from '../utils/url';
+import { deleteCaptureImages } from '../utils/capture_store';
 
 const OFFSCREEN_DOCUMENT_URL = 'offscreen/offscreen.html';
 const CAPTURE_PAGE_URL = 'capture/capture.html';
 /** Drop a stored bundle this long after the preview page handshakes — gives
  *  the preview tab enough time to fetch the data even if the user closes it
  *  immediately and reopens via Ctrl+Shift+T. */
-const CAPTURE_BUNDLE_TTL_MS = 5 * 60_000;
+const CAPTURE_BUNDLE_TTL_MS = 45 * 60_000;
 // chrome.tabs.captureVisibleTab is throttled to ~2 calls per second per
 // MAX_CAPTURE_VISIBLE_TAB_CALLS_PER_SECOND. Add a small fixed delay between
 // tiles so we never trip the quota and lose a frame mid-capture.
@@ -64,6 +67,8 @@ interface CaptureSession {
 interface StoredBundle {
   bundle: CaptureResultBundle;
   expiresAt: number;
+  /** Preview HTML tabs still holding this bundle. Decremented on RELEASE. */
+  remainingClients: number;
 }
 
 let activeSession: CaptureSession | null = null;
@@ -72,6 +77,8 @@ let lastCaptureAt = 0;
  *  self-evict after CAPTURE_BUNDLE_TTL_MS so a memory leak can't accumulate
  *  if the preview tab is closed before the handshake. */
 const captureBundles = new Map<string, StoredBundle>();
+/** session id → tabId per part (0-based). Used to jump between preview HTML tabs. */
+const previewTabIds = new Map<string, Array<number | undefined>>();
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (isMessageFor<StartCaptureRequest>(message, MESSAGE_TARGETS.background, 'START_CAPTURE')) {
@@ -129,12 +136,41 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       'CAPTURE_SESSION_RELEASE',
     )
   ) {
-    captureBundles.delete(message.id);
+    const stored = captureBundles.get(message.id);
+    if (stored) {
+      stored.remainingClients -= 1;
+      if (stored.remainingClients <= 0) {
+        captureBundles.delete(message.id);
+        previewTabIds.delete(message.id);
+        void deleteCaptureImages(message.id);
+      }
+    }
     sendResponse({ ok: true });
     return false;
   }
 
+  if (
+    isMessageFor<CaptureFocusPartRequest>(message, MESSAGE_TARGETS.background, 'CAPTURE_FOCUS_PART')
+  ) {
+    void handleFocusPart(message)
+      .then((response) => sendResponse(response))
+      .catch((error: unknown) => {
+        sendResponse({
+          ok: false,
+          detail: stringifyError(error),
+        } satisfies CaptureFocusPartResponse);
+      });
+    return true;
+  }
+
   return false;
+});
+
+chrome.tabs.onRemoved.addListener((tabId) => {
+  for (const tabIds of previewTabIds.values()) {
+    const index = tabIds.indexOf(tabId);
+    if (index >= 0) tabIds[index] = undefined;
+  }
 });
 
 /** Toolbar shortcut (Alt+Shift+P) reuses the popup-driven flow. */
@@ -376,33 +412,28 @@ async function handleCaptureTileCrop(
 
 async function finaliseAndDeliver(): Promise<void> {
   if (!activeSession) return;
+  const id = crypto.randomUUID();
   const finalizeRequest: OffscreenFinalizeRequest = {
     type: 'OFFSCREEN_FINALIZE',
     target: MESSAGE_TARGETS.offscreen,
+    id,
   };
   const result = (await chrome.runtime.sendMessage(finalizeRequest)) as
     | OffscreenFinalizeResponse
     | undefined;
-  if (!result?.ok || result.pngs.length === 0) {
+  if (!result?.ok || result.images.length === 0) {
     await emitError('OFFSCREEN_FAILED', 'finalize returned no images');
     return;
   }
 
   const baseFilename = buildScreenshotFilename(activeSession.tabUrl);
-  // Strip .png so the preview page can append the right extension per format.
   const baseName = baseFilename.replace(/\.png$/i, '');
-  const total = result.pngs.length;
+  const images: CaptureResultBundle['images'] = result.images.map((meta, index) => ({
+    index,
+    width: meta.width,
+    height: meta.height,
+  }));
 
-  // Decode each PNG once just to record dimensions — handy for the preview
-  // page's PDF export so we don't ship 1000×1000 pages for a 320×240 image.
-  const images: CaptureResultBundle['images'] = [];
-  for (const pngBase64 of result.pngs) {
-    if (!pngBase64) continue;
-    const dim = decodePngDimensions(pngBase64);
-    images.push({ pngBase64, width: dim.width, height: dim.height });
-  }
-
-  const id = crypto.randomUUID();
   const bundle: CaptureResultBundle = {
     id,
     sourceUrl: activeSession.tabUrl,
@@ -410,16 +441,23 @@ async function finaliseAndDeliver(): Promise<void> {
     capturedAt: new Date().toISOString(),
     images,
   };
-  captureBundles.set(id, { bundle, expiresAt: Date.now() + CAPTURE_BUNDLE_TTL_MS });
+  captureBundles.set(id, {
+    bundle,
+    expiresAt: Date.now() + CAPTURE_BUNDLE_TTL_MS,
+    remainingClients: images.length,
+  });
   scheduleBundleEviction(id);
 
-  // Open the preview tab next to the source tab so the user lands on it.
-  const previewUrl = `${chrome.runtime.getURL(CAPTURE_PAGE_URL)}?id=${encodeURIComponent(id)}&url=${encodeURIComponent(activeSession.tabUrl)}`;
+  const parts = images.length;
+  const tabIds: Array<number | undefined> = [];
   try {
-    await chrome.tabs.create({ url: previewUrl, active: true });
+    for (let i = 0; i < parts; i++) {
+      const previewUrl = buildPreviewUrl(id, activeSession.tabUrl, i + 1, parts);
+      const tab = await chrome.tabs.create({ url: previewUrl, active: i === 0 });
+      tabIds.push(tab.id);
+    }
+    previewTabIds.set(id, tabIds);
   } catch (error) {
-    // Fallback: if tab open fails (extremely unusual), just notify the popup
-    // so the user can recover.
     console.error('[voiceido] failed to open capture preview', error);
     await emitError('UNKNOWN', 'failed to open preview tab');
   }
@@ -427,7 +465,7 @@ async function finaliseAndDeliver(): Promise<void> {
   await sendToPopup({
     type: 'CAPTURE_COMPLETE',
     target: MESSAGE_TARGETS.popup,
-    imageCount: total,
+    imageCount: parts,
   });
 }
 
@@ -435,27 +473,63 @@ function scheduleBundleEviction(id: string): void {
   setTimeout(() => {
     const entry = captureBundles.get(id);
     if (!entry) return;
-    if (Date.now() >= entry.expiresAt) captureBundles.delete(id);
+    if (Date.now() >= entry.expiresAt) {
+      captureBundles.delete(id);
+      previewTabIds.delete(id);
+      void deleteCaptureImages(id);
+    }
   }, CAPTURE_BUNDLE_TTL_MS + 1_000);
 }
 
-/**
- * Cheap PNG dimension reader — IHDR is always at byte offset 16..24 in a
- * valid PNG. Saves us from instantiating an Image() in the service worker
- * (which has no DOM) just to read width / height.
- */
-function decodePngDimensions(base64: string): { width: number; height: number } {
-  // Decode just the first 24 bytes; chunk header lives in the first IHDR.
-  const header = atob(base64.slice(0, 64));
-  if (header.length < 24) return { width: 0, height: 0 };
-  const view = new DataView(
-    Uint8Array.from(header, (c) => c.charCodeAt(0)).buffer,
+function buildPreviewUrl(id: string, sourceUrl: string, part: number, parts: number): string {
+  return (
+    `${chrome.runtime.getURL(CAPTURE_PAGE_URL)}?id=${encodeURIComponent(id)}` +
+    `&url=${encodeURIComponent(sourceUrl)}&part=${part}&parts=${parts}`
   );
-  // PNG signature is 8 bytes, then 4-byte length, then 'IHDR' (4), then
-  // width (4 BE), height (4 BE).
-  const width = view.getUint32(16, false);
-  const height = view.getUint32(20, false);
-  return { width, height };
+}
+
+async function handleFocusPart(message: CaptureFocusPartRequest): Promise<CaptureFocusPartResponse> {
+  const stored = captureBundles.get(message.id);
+  if (!stored) {
+    return { ok: false, detail: 'session expired or unknown' };
+  }
+  const parts = stored.bundle.images.length;
+  if (message.part < 1 || message.part > parts) {
+    return { ok: false, detail: `part ${message.part} is out of range` };
+  }
+
+  let tabIds = previewTabIds.get(message.id);
+  if (!tabIds) {
+    tabIds = [];
+    previewTabIds.set(message.id, tabIds);
+  }
+
+  const slot = message.part - 1;
+  const existingId = tabIds[slot];
+  if (existingId !== undefined) {
+    try {
+      const tab = await chrome.tabs.get(existingId);
+      await chrome.tabs.update(existingId, { active: true });
+      if (tab.windowId !== undefined) {
+        try {
+          await chrome.windows.update(tab.windowId, { focused: true });
+        } catch {
+          // Focusing the window is best-effort.
+        }
+      }
+      return { ok: true };
+    } catch {
+      tabIds[slot] = undefined;
+    }
+  }
+
+  const tab = await chrome.tabs.create({
+    url: buildPreviewUrl(message.id, stored.bundle.sourceUrl, message.part, parts),
+    active: true,
+  });
+  tabIds[slot] = tab.id;
+  stored.remainingClients += 1;
+  return { ok: true };
 }
 
 // --- Offscreen document plumbing -------------------------------------------

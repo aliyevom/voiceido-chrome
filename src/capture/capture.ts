@@ -14,11 +14,15 @@
 
 import {
   MESSAGE_TARGETS,
+  type CaptureFocusPartRequest,
+  type CaptureFocusPartResponse,
   type CaptureResultBundle,
   type CaptureSessionGetRequest,
   type CaptureSessionGetResponse,
   type CaptureSessionReleaseRequest,
 } from '../utils/messages';
+import { getCaptureImage } from '../utils/capture_store';
+import { buildZip } from '../utils/zip';
 import {
   loadApiSettings,
   saveApiSettings,
@@ -27,8 +31,6 @@ import {
 } from '../utils/preferences';
 
 interface RenderedImage {
-  /** Base64 PNG bytes (no `data:` prefix) — same as the bundle gives us. */
-  pngBase64: string;
   width: number;
   height: number;
   blob: Blob;
@@ -36,12 +38,18 @@ interface RenderedImage {
 
 interface PageState {
   bundle: CaptureResultBundle | null;
+  fullBundle: CaptureResultBundle | null;
+  part: number | null;
+  parts: number | null;
   rendered: RenderedImage[];
   apiSettings: ApiSettings;
 }
 
 const state: PageState = {
   bundle: null,
+  fullBundle: null,
+  part: null,
+  parts: null,
   rendered: [],
   apiSettings: { baseUrl: '', apiKey: '' },
 };
@@ -52,6 +60,10 @@ async function main(): Promise<void> {
   const params = new URLSearchParams(window.location.search);
   const id = params.get('id');
   const sourceUrl = params.get('url') ?? '';
+  const part = parsePositiveInt(params.get('part'));
+  const parts = parsePositiveInt(params.get('parts'));
+  state.part = part;
+  state.parts = parts;
   setSourceLabel(sourceUrl);
 
   state.apiSettings = await loadApiSettings();
@@ -66,10 +78,16 @@ async function main(): Promise<void> {
   }
 
   try {
-    const bundle = await fetchBundle(id);
+    const fullBundle = await fetchBundle(id);
+    state.fullBundle = fullBundle;
+    const bundle = sliceBundleForPart(fullBundle, part, parts);
     state.bundle = bundle;
-    document.title = `Voiceido — ${bundle.baseName}`;
-    await renderImages(bundle);
+    document.title =
+      bundle.images.length === 1 && parts && parts > 1 && part
+        ? `Voiceido — ${fullBundle.baseName} (${part}/${parts})`
+        : `Voiceido — ${bundle.baseName}`;
+    renderFolderNav(fullBundle, part, parts);
+    await renderImages(bundle, part, parts);
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Unknown error';
     showError('Could not load capture.', message);
@@ -97,14 +115,21 @@ async function fetchBundle(id: string): Promise<CaptureResultBundle> {
   return response.bundle;
 }
 
-async function renderImages(bundle: CaptureResultBundle): Promise<void> {
+async function renderImages(
+  bundle: CaptureResultBundle,
+  part: number | null,
+  parts: number | null,
+): Promise<void> {
   const stack = mustGet<HTMLDivElement>('image-stack');
   stack.innerHTML = '';
   stack.removeAttribute('aria-busy');
 
-  if (bundle.images.length > 1) {
-    const info = mustGet<HTMLDivElement>('page-info');
-    info.textContent = `Captured in ${bundle.images.length} images (page exceeded the canvas size limit).`;
+  const info = mustGet<HTMLDivElement>('page-info');
+  if (part && parts && parts > 1) {
+    info.textContent = `You are on part ${part} of ${parts}. Click another file in the folder to jump to that tab.`;
+    info.hidden = false;
+  } else if (bundle.images.length > 1) {
+    info.textContent = `Captured in ${bundle.images.length} images (split at the canvas size limit so text stays readable).`;
     info.hidden = false;
   }
 
@@ -112,21 +137,52 @@ async function renderImages(bundle: CaptureResultBundle): Promise<void> {
   for (let i = 0; i < bundle.images.length; i++) {
     const meta = bundle.images[i];
     if (!meta) continue;
-    const blob = base64ToBlob(meta.pngBase64, 'image/png');
+    const blob = await getCaptureImage(bundle.id, meta.index);
     const url = URL.createObjectURL(blob);
 
     const img = new Image();
-    img.alt = `Capture ${i + 1} of ${bundle.images.length}`;
+    img.alt =
+      part && parts
+        ? `Capture part ${part} of ${parts}`
+        : `Capture ${i + 1} of ${bundle.images.length}`;
     img.src = url;
     stack.appendChild(img);
 
     state.rendered.push({
-      pngBase64: meta.pngBase64,
       width: meta.width,
       height: meta.height,
       blob,
     });
   }
+}
+
+function parsePositiveInt(raw: string | null): number | null {
+  if (!raw) return null;
+  const n = Number.parseInt(raw, 10);
+  return Number.isFinite(n) && n > 0 ? n : null;
+}
+
+/**
+ * When the worker opened one HTML tab per strip, keep existing download /
+ * OCR / Analyze logic but only on this tab's slice.
+ */
+function sliceBundleForPart(
+  bundle: CaptureResultBundle,
+  part: number | null,
+  parts: number | null,
+): CaptureResultBundle {
+  if (!part || !parts || parts <= 1) return bundle;
+  const index = part - 1;
+  const image = bundle.images[index];
+  if (!image) {
+    throw new Error(`Capture part ${part} of ${parts} is missing.`);
+  }
+  const pad = String(parts).length;
+  return {
+    ...bundle,
+    baseName: `${bundle.baseName}-${String(part).padStart(pad, '0')}`,
+    images: [image],
+  };
 }
 
 function showError(title: string, detail: string): void {
@@ -162,11 +218,74 @@ function setSourceLabel(rawUrl: string): void {
 // Toolbar wiring
 // ---------------------------------------------------------------------------
 
+function renderFolderNav(
+  fullBundle: CaptureResultBundle,
+  part: number | null,
+  parts: number | null,
+): void {
+  const rail = mustGet<HTMLElement>('folder-rail');
+  const list = mustGet<HTMLDivElement>('folder-list');
+  const meta = mustGet<HTMLSpanElement>('folder-meta');
+  const allActions = mustGet<HTMLElement>('all-actions');
+  const total = parts && parts > 1 ? parts : fullBundle.images.length;
+  if (total <= 1) {
+    rail.hidden = true;
+    allActions.hidden = true;
+    return;
+  }
+
+  rail.hidden = false;
+  allActions.hidden = false;
+  const pad = String(total).length;
+  meta.textContent = `${total} HTML pages · you are on part ${part ?? 1}`;
+  list.innerHTML = '';
+
+  for (let i = 1; i <= total; i++) {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = `folder-item${i === part ? ' current' : ''}`;
+    btn.setAttribute('role', 'listitem');
+    if (i === part) btn.setAttribute('aria-current', 'page');
+    const name = document.createElement('span');
+    name.className = 'folder-item-name';
+    name.textContent = `Part ${String(i).padStart(pad, '0')}`;
+    const file = document.createElement('span');
+    file.className = 'folder-item-file';
+    file.textContent = `${fullBundle.baseName}-${String(i).padStart(pad, '0')}.html`;
+    btn.append(name, file);
+    btn.addEventListener('click', () => {
+      void focusPart(i);
+    });
+    list.appendChild(btn);
+  }
+}
+
+async function focusPart(part: number): Promise<void> {
+  if (!state.fullBundle) return;
+  if (part === state.part) return;
+  const request: CaptureFocusPartRequest = {
+    type: 'CAPTURE_FOCUS_PART',
+    target: MESSAGE_TARGETS.background,
+    id: state.fullBundle.id,
+    part,
+  };
+  const response = (await chrome.runtime.sendMessage(request)) as
+    | CaptureFocusPartResponse
+    | undefined;
+  if (!response?.ok) {
+    toast(response?.detail ?? 'Could not open that part.', 'error');
+  }
+}
+
 function bindToolbar(): void {
   bindAction('btn-pdf', handleDownloadPdf);
   bindAction('btn-image', handleDownloadImage);
   bindAction('btn-ocr', () => handleCloudJob('ocr'));
   bindAction('btn-analyze', () => handleCloudJob('analyze'));
+  bindAction('btn-pdf-all', handleDownloadPdfAll);
+  bindAction('btn-image-all', handleDownloadImagesZip);
+  bindAction('btn-ocr-all', () => handleCloudJobAll('ocr'));
+  bindAction('btn-analyze-all', () => handleCloudJobAll('analyze'));
   bindAction('btn-settings', openSettings);
 
   // Cmd/Ctrl+S → image, Cmd/Ctrl+P → PDF (preventDefault to avoid native).
@@ -223,6 +342,120 @@ async function runWithBusy(
 // ---------------------------------------------------------------------------
 // Image download
 // ---------------------------------------------------------------------------
+
+async function downloadBlob(filename: string, blob: Blob): Promise<void> {
+  const url = URL.createObjectURL(blob);
+  try {
+    await chrome.downloads.download({
+      url,
+      filename,
+      saveAs: false,
+      conflictAction: 'uniquify',
+    });
+  } finally {
+    setTimeout(() => URL.revokeObjectURL(url), 30_000);
+  }
+}
+
+function partPad(total: number): number {
+  return String(total).length;
+}
+
+function partFileStem(index: number, total: number): string {
+  const base = state.fullBundle?.baseName ?? state.bundle?.baseName ?? 'capture';
+  return `${base}-${String(index + 1).padStart(partPad(total), '0')}`;
+}
+
+async function loadAllRendered(): Promise<RenderedImage[]> {
+  const full = state.fullBundle;
+  if (!full || full.images.length === 0) {
+    throw new Error('No capture parts loaded.');
+  }
+  const out: RenderedImage[] = [];
+  for (const meta of full.images) {
+    const blob = await getCaptureImage(full.id, meta.index);
+    out.push({ width: meta.width, height: meta.height, blob });
+  }
+  return out;
+}
+
+async function handleDownloadImagesZip(): Promise<void> {
+  const images = await loadAllRendered();
+  toast(`Zipping ${images.length} images…`);
+  const entries = await Promise.all(
+    images.map(async (item, i) => ({
+      name: `${partFileStem(i, images.length)}.png`,
+      data: new Uint8Array(await item.blob.arrayBuffer()),
+    })),
+  );
+  const zip = buildZip(entries);
+  const base = state.fullBundle?.baseName ?? 'capture';
+  await downloadBlob(`${base}-images.zip`, new Blob([zip as BlobPart], { type: 'application/zip' }));
+  toast(`Saved ${images.length} images as zip.`, 'success');
+}
+
+async function handleDownloadPdfAll(): Promise<void> {
+  const images = await loadAllRendered();
+  toast(`Building ${images.length} PDFs…`);
+  const entries = [];
+  for (let i = 0; i < images.length; i++) {
+    const item = images[i];
+    if (!item) continue;
+    toast(`PDF ${i + 1}/${images.length}…`);
+    const pdfBytes = buildPdfBytes([await pngToJpegPage(item)]);
+    entries.push({
+      name: `${partFileStem(i, images.length)}.pdf`,
+      data: pdfBytes,
+    });
+  }
+  const zip = buildZip(entries);
+  const base = state.fullBundle?.baseName ?? 'capture';
+  await downloadBlob(`${base}-pdfs.zip`, new Blob([zip as BlobPart], { type: 'application/zip' }));
+  toast(`Saved ${entries.length} PDFs as zip.`, 'success');
+}
+
+async function handleCloudJobAll(job: CloudJob): Promise<void> {
+  if (!isApiConfigured(state.apiSettings)) {
+    toast('Configure the backend API first (gear icon).', 'error');
+    openSettings();
+    return;
+  }
+  const images = await loadAllRendered();
+  const label = job === 'ocr' ? 'OCR' : 'Analyze';
+  const perImage: Array<{ index: number; text: string }> = [];
+  for (let i = 0; i < images.length; i++) {
+    const item = images[i];
+    if (!item) continue;
+    toast(`${label} ${i + 1}/${images.length}…`);
+    const text = await callCloudJob(job, item.blob);
+    perImage.push({ index: i + 1, text });
+  }
+
+  let synthesis = '';
+  if (job === 'analyze' && perImage.length > 1) {
+    toast('Analyze: synthesising across parts…');
+    synthesis = await callSynthesize(
+      perImage.map((p) => ({ index: p.index, analysis: p.text })),
+    ).catch((e: unknown) => {
+      console.warn('[analyze] synthesis failed', e);
+      return '';
+    });
+  }
+
+  const enc = new TextEncoder();
+  const entries = perImage.map((p, i) => ({
+    name: `${partFileStem(i, images.length)}.${job}.txt`,
+    data: enc.encode(p.text.trim() || `(${label} returned empty result)`),
+  }));
+  entries.push({
+    name: `${state.fullBundle?.baseName ?? 'capture'}.${job}.combined.txt`,
+    data: enc.encode(formatCombinedText(label, perImage, synthesis)),
+  });
+  const zip = buildZip(entries);
+  const base = state.fullBundle?.baseName ?? 'capture';
+  await downloadBlob(`${base}-${job}.zip`, new Blob([zip as BlobPart], { type: 'application/zip' }));
+  toast(`${label}: saved ${perImage.length} files as zip.`, 'success');
+}
 
 async function handleDownloadImage(): Promise<void> {
   if (!state.bundle || state.rendered.length === 0) {
@@ -690,14 +923,6 @@ function mustGet<T extends HTMLElement>(id: string): T {
   const el = document.getElementById(id) as T | null;
   if (!el) throw new Error(`Missing #${id}`);
   return el;
-}
-
-function base64ToBlob(b64: string, type: string): Blob {
-  const binary = atob(b64);
-  const len = binary.length;
-  const bytes = new Uint8Array(len);
-  for (let i = 0; i < len; i++) bytes[i] = binary.charCodeAt(i);
-  return new Blob([bytes as BlobPart], { type });
 }
 
 function withIndex(filename: string, index: number, total: number): string {

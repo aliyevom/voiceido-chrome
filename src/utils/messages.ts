@@ -207,12 +207,14 @@ export interface OffscreenDrawCropRequest {
 export interface OffscreenFinalizeRequest {
   type: 'OFFSCREEN_FINALIZE';
   target: typeof MESSAGE_TARGETS.offscreen;
+  /** Session id used as the IndexedDB key for the stitched PNG blobs. */
+  id: string;
 }
 
 export interface OffscreenFinalizeResponse {
   ok: boolean;
-  /** Base64-encoded PNGs (no data: prefix) for each stitched image. */
-  pngs: string[];
+  /** Dimensions only — PNG bytes live in IndexedDB under `id`. */
+  images: Array<{ width: number; height: number }>;
 }
 
 export interface OffscreenResetRequest {
@@ -224,8 +226,8 @@ export interface OffscreenResetRequest {
 
 /**
  * Result of a finished capture, handed off to the in-extension preview page
- * (capture.html). PNG byte data is kept in the service worker so we don't
- * round-trip multi-MB images through chrome.storage.
+ * (capture.html). PNG bytes are stored in IndexedDB (see capture_store.ts)
+ * because chrome.runtime messages cannot exceed 64 MiB.
  */
 export interface CaptureResultBundle {
   /** Stable session id used by the preview page to fetch this result. */
@@ -238,8 +240,8 @@ export interface CaptureResultBundle {
   capturedAt: string;
   /** One entry per stitched output image. Order = top-to-bottom of the page. */
   images: Array<{
-    /** Base64-encoded PNG bytes (no `data:` prefix). */
-    pngBase64: string;
+    /** Index in IndexedDB (`sessionId:index`). */
+    index: number;
     /** Pixel dimensions of the PNG. */
     width: number;
     height: number;
@@ -266,6 +268,20 @@ export interface CaptureSessionReleaseRequest {
   id: string;
 }
 
+/** Preview page → background: focus (or recreate) the HTML tab for `part`. */
+export interface CaptureFocusPartRequest {
+  type: 'CAPTURE_FOCUS_PART';
+  target: typeof MESSAGE_TARGETS.background;
+  id: string;
+  /** 1-based part number. */
+  part: number;
+}
+
+export interface CaptureFocusPartResponse {
+  ok: boolean;
+  detail?: string;
+}
+
 export type AnyMessage =
   | StartCaptureRequest
   | CaptureProgressEvent
@@ -282,7 +298,8 @@ export type AnyMessage =
   | OffscreenFinalizeRequest
   | OffscreenResetRequest
   | CaptureSessionGetRequest
-  | CaptureSessionReleaseRequest;
+  | CaptureSessionReleaseRequest
+  | CaptureFocusPartRequest;
 
 /**
  * Type guard helper — confirms an inbound runtime message matches one of the
