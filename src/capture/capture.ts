@@ -314,9 +314,9 @@ function bindPreviewSmoke(): void {
         puff.className = 'preview-smoke-puff';
         const streak = (i / count) * Math.sign(dy || 1) * Math.min(Math.abs(dy) * 0.12, 40);
         puff.style.top = `${mid - streak}px`;
-        puff.style.setProperty('--drift', `${-56 - speed * 54 - Math.random() * 36}px`);
-        puff.style.setProperty('--rise', `${(Math.random() - 0.5) * 22}px`);
-        puff.style.setProperty('--scale', `${1.7 + speed * 1.6 + Math.random() * 0.4}`);
+        puff.style.setProperty('--drift', `${-36 - speed * 28 - Math.random() * 18}px`);
+        puff.style.setProperty('--rise', `${(Math.random() - 0.5) * 16}px`);
+        puff.style.setProperty('--scale', `${1.4 + speed * 0.9 + Math.random() * 0.3}`);
         smoke.appendChild(puff);
         puff.addEventListener('animationend', () => puff.remove());
       }
