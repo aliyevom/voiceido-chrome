@@ -126,6 +126,10 @@ If meeting_transcript:
 
 If chat_thread:
   ## Thread Summary, ## Participants, ## Message-by-Message Breakdown,
+  ## Visible Images / Attachments (describe EVERY photo, thumbnail, sticker,
+  unfurl preview, crest, logo, or inline picture — even when OCR has no text
+  for it; say what it depicts, any visible letters/monograms, and where it
+  sits in the thread),
   ## Decisions, ## Open Questions, ## Verbatim Quotes, ## What Is Not Defined.
 
 If article:
@@ -164,6 +168,10 @@ If dashboard_or_ui:
   ## App / Page
   ## Visible State
   ## All Visible Controls & Their Status
+  ## Visible Places / Cards / Photos
+  Every named card or result (Maps listings, search hits, product tiles).
+  Include rating, price, hours, address, and a description of each photo.
+  Do not skip a card because its picture has no OCR text.
   ## Errors / Warnings Visible
   ## Likely Next Actions
   ## What Is Not Defined
@@ -173,6 +181,9 @@ If mixed:
 
 GROUND RULES
 - Length: prefer long, detailed essays. Do not artificially compress.
+- Images: never omit pictures that appear in the screenshot. Photos, food,
+  maps, product shots, chat attachments, and decorative marks are part of
+  the capture and must be documented in the essay.
 - Source: every name, number, URL, date and quote must come from the OCR or
   be plainly visible in the image. Never invent.
 - Privacy: do NOT redact names. Include them verbatim — the user owns this
@@ -250,7 +261,7 @@ export async function analyzeImage(
     { role: 'user', content: buildUserContent(ocrText, dataUrl) },
   ];
 
-  const first = (await chat(messages, { maxTokens: 4096, temperature: 0.3 })) ?? '';
+  const first = (await chat(messages, { maxTokens: 16384, temperature: 0.3 })) ?? '';
 
   if (!opts.disableRetry && looksLikeRefusal(first)) {
     // The model balked — likely because of avatars/names in the image.
@@ -271,7 +282,7 @@ apologize. Do not refuse. Do not include any disclaimer.`,
         content: buildUserContent(ocrText, null),
       },
     ];
-    const second = (await chat(retryMessages, { maxTokens: 4096, temperature: 0.3 })) ?? '';
+    const second = (await chat(retryMessages, { maxTokens: 16384, temperature: 0.3 })) ?? '';
     if (second && !looksLikeRefusal(second)) return second;
     // If the retry also refused, fall back to a deterministic OCR-only
     // notice so the user at least sees what was captured.

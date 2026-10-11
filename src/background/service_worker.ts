@@ -32,6 +32,7 @@ import {
   type CaptureTileCropRequest,
   type CaptureTileRequest,
   type CaptureTileResponse,
+  type ExtractedList,
   type OffscreenDrawCropRequest,
   type OffscreenDrawRequest,
   type OffscreenDrawResponse,
@@ -62,6 +63,7 @@ interface CaptureSession {
   windowId: number;
   tabUrl: string;
   tilePlanCount: number;
+  list?: ExtractedList;
 }
 
 interface StoredBundle {
@@ -245,8 +247,11 @@ async function runScrollLoop(tabId: number, options: CaptureOptions): Promise<vo
     options,
   };
   const response = (await chrome.tabs.sendMessage(tabId, message)) as
-    | { ok: boolean; detail?: string; code?: string }
+    | { ok: boolean; detail?: string; code?: string; list?: ExtractedList }
     | undefined;
+  if (response?.ok && response.list && activeSession) {
+    activeSession.list = response.list;
+  }
   if (!response?.ok) {
     const code = (response?.code as CaptureFailureCode | undefined) ?? 'UNKNOWN';
     const detail = response?.detail ?? 'content script reported failure';
@@ -441,22 +446,21 @@ async function finaliseAndDeliver(): Promise<void> {
     capturedAt: new Date().toISOString(),
     images,
   };
+  if (activeSession.list && activeSession.list.items.length > 0) {
+    bundle.list = activeSession.list;
+  }
   captureBundles.set(id, {
     bundle,
     expiresAt: Date.now() + CAPTURE_BUNDLE_TTL_MS,
-    remainingClients: images.length,
+    remainingClients: 1,
   });
   scheduleBundleEviction(id);
 
   const parts = images.length;
-  const tabIds: Array<number | undefined> = [];
   try {
-    for (let i = 0; i < parts; i++) {
-      const previewUrl = buildPreviewUrl(id, activeSession.tabUrl, i + 1, parts);
-      const tab = await chrome.tabs.create({ url: previewUrl, active: i === 0 });
-      tabIds.push(tab.id);
-    }
-    previewTabIds.set(id, tabIds);
+    const previewUrl = buildPreviewUrl(id, activeSession.tabUrl);
+    const tab = await chrome.tabs.create({ url: previewUrl, active: true });
+    previewTabIds.set(id, [tab.id]);
   } catch (error) {
     console.error('[voiceido] failed to open capture preview', error);
     await emitError('UNKNOWN', 'failed to open preview tab');
@@ -481,10 +485,10 @@ function scheduleBundleEviction(id: string): void {
   }, CAPTURE_BUNDLE_TTL_MS + 1_000);
 }
 
-function buildPreviewUrl(id: string, sourceUrl: string, part: number, parts: number): string {
+function buildPreviewUrl(id: string, sourceUrl: string): string {
   return (
     `${chrome.runtime.getURL(CAPTURE_PAGE_URL)}?id=${encodeURIComponent(id)}` +
-    `&url=${encodeURIComponent(sourceUrl)}&part=${part}&parts=${parts}`
+    `&url=${encodeURIComponent(sourceUrl)}`
   );
 }
 
@@ -524,7 +528,7 @@ async function handleFocusPart(message: CaptureFocusPartRequest): Promise<Captur
   }
 
   const tab = await chrome.tabs.create({
-    url: buildPreviewUrl(message.id, stored.bundle.sourceUrl, message.part, parts),
+    url: buildPreviewUrl(message.id, stored.bundle.sourceUrl),
     active: true,
   });
   tabIds[slot] = tab.id;

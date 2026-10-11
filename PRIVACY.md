@@ -1,6 +1,6 @@
 # Privacy Policy — Full Page Voiceido
 
-_Last updated: 2026-04-26_
+_Last updated: 2026-10-10_
 
 Full Page Voiceido ("the extension") is a Chrome browser extension published by
 **aliyevdevops** that captures the visible web page in the active tab as a
@@ -30,6 +30,7 @@ requests are made.
 | Data                             | Purpose                                                                 | Sent off-device?                                                                                  |
 | -------------------------------- | ----------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------- |
 | Screenshot of the active tab     | Render the preview, allow PNG / PDF download                            | No — stays in the browser.                                                                        |
+| Photo URLs found in an inner-section list | Show a structured list of cards + photos next to the screenshot; optional “save photos” uses Chrome’s download manager | Only if you click **List photos** — the browser then fetches those image URLs (already present on the page you captured). |
 | Screenshot of the active tab     | Run OCR or AI image analysis (optional)                                 | Yes — only if the user has configured a backend URL + API key and explicitly clicks `OCR` / `Analyze`. The image is `POST`ed once to that backend over HTTPS. |
 | User preferences (capture mode, expand-scrollables, backend URL, API key) | Persist user settings between sessions   | No — stored in `chrome.storage.local` on the user's device.                                       |
 | Browsing history / page URLs     | Not used.                                                               | No.                                                                                               |

@@ -121,7 +121,7 @@ app.post(
 app.post(
   '/api/analyze/synthesize',
   requireApiKey,
-  express.json({ limit: '5mb' }),
+  express.json({ limit: '20mb' }),
   async (req: Request, res: Response) => {
     const body = req.body as { items?: unknown };
     const raw = Array.isArray(body?.items) ? body.items : [];

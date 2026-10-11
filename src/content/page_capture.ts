@@ -25,8 +25,11 @@ import {
   type CaptureTileCropRequest,
   type CaptureTileRequest,
   type CaptureTileResponse,
+  type ExtractedList,
+  type ExtractedListItem,
   type ScrollPageRequest,
 } from '../utils/messages';
+import { freezeExtractedList, inlineExtractedPhotos, mergeExtractedList } from './list_extract';
 
 // Rough delay (ms) to let layout / lazy-loaded images settle before capture.
 const TILE_SETTLE_MS = 180;
@@ -73,7 +76,7 @@ if (!window.__voiceidoContentLoaded) {
   chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     if (isMessageFor<ScrollPageRequest>(message, MESSAGE_TARGETS.content, 'SCROLL_PAGE')) {
       void runCapture(message.options)
-        .then(() => sendResponse({ ok: true }))
+        .then((list) => sendResponse(list ? { ok: true, list } : { ok: true }))
         .catch((error: unknown) => {
           console.error('[voiceido] capture failed', error);
           sendResponse({ ok: false, detail: stringifyError(error), code: extractCode(error) });
@@ -84,12 +87,12 @@ if (!window.__voiceidoContentLoaded) {
   });
 }
 
-async function runCapture(options: CaptureOptions): Promise<void> {
+async function runCapture(options: CaptureOptions): Promise<ExtractedList | undefined> {
   if (options.mode === 'innerSection') {
-    await runElementCapture();
-    return;
+    return runElementCapture();
   }
   await runFullPageCapture(options);
+  return undefined;
 }
 
 // ===========================================================================
@@ -275,12 +278,12 @@ class CaptureCodedError extends Error {
   }
 }
 
-async function runElementCapture(): Promise<void> {
+async function runElementCapture(): Promise<ExtractedList | undefined> {
   const target = await runPickerOverlay();
   if (!target) {
     throw new CaptureCodedError('PICKER_CANCELLED', 'Capture cancelled.');
   }
-  await captureElement(target);
+  return captureElement(target);
 }
 
 /**
@@ -518,7 +521,7 @@ function describeElement(el: HTMLElement): string {
   return `${tag}${id}${cls} · ${el.scrollWidth}×${el.scrollHeight}px`;
 }
 
-async function captureElement(element: HTMLElement): Promise<void> {
+async function captureElement(element: HTMLElement): Promise<ExtractedList | undefined> {
   // Bring the element into the viewport. Snap to the top so we have the
   // maximum vertical room available for tiling. Some browsers honour
   // `behavior: 'instant'` while others need the synchronous fallback.
@@ -558,6 +561,8 @@ async function captureElement(element: HTMLElement): Promise<void> {
       `[voiceido] inner-section capture: ${totalWidth}×${totalHeight} via ${numTiles} tile(s) of ${element.clientWidth}×${tileH}`,
     );
 
+    const listBag = new Map<string, ExtractedListItem>();
+
     for (let i = 0; i < numTiles; i++) {
       const desiredTop = i * tileH;
       const actualTop = Math.min(desiredTop, totalHeight - tileH);
@@ -592,7 +597,18 @@ async function captureElement(element: HTMLElement): Promise<void> {
       if (!response.ok) {
         throw new Error(response.detail ?? 'crop tile rejected by background');
       }
+      mergeExtractedList(listBag, element);
     }
+
+    const list = freezeExtractedList(listBag);
+    if (list.items.length === 0) return undefined;
+    await inlineExtractedPhotos(list);
+    const photoCount = list.items.reduce((n, item) => n + item.images.length, 0);
+    console.log(
+      `[voiceido] extracted ${list.items.length} content item(s), ${photoCount} photo(s)`,
+      list.items.map((item) => ({ title: item.title, href: item.href, photos: item.images.length })),
+    );
+    return list;
   } finally {
     element.scrollTop = originalElScroll.top;
     element.scrollLeft = originalElScroll.left;

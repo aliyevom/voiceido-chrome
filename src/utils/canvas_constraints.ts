@@ -9,6 +9,39 @@ export const MAX_PRIMARY_DIMENSION = 15000 * 2; // 30000
 export const MAX_SECONDARY_DIMENSION = 4000 * 2; // 8000
 export const MAX_AREA = MAX_PRIMARY_DIMENSION * MAX_SECONDARY_DIMENSION;
 
+/**
+ * Target page height as a multiple of width (~4:3 screenshot). A 1703×30000
+ * stitch displayed "fit to window" becomes ~58px wide; slicing to this height
+ * keeps PNG/PDF/OCR at full capture width.
+ */
+const READABLE_HEIGHT_RATIO = 4 / 3;
+const MIN_READABLE_PAGE_HEIGHT = 1600;
+
+export function readablePageHeight(width: number): number {
+  const w = Math.max(1, Math.round(width));
+  return Math.max(MIN_READABLE_PAGE_HEIGHT, Math.round(w * READABLE_HEIGHT_RATIO));
+}
+
+export function planReadableSlices(
+  width: number,
+  height: number,
+): Array<{ top: number; height: number }> {
+  const pageH = readablePageHeight(width);
+  if (height <= Math.round(pageH * 1.15)) {
+    return [{ top: 0, height }];
+  }
+  const count = Math.max(1, Math.ceil(height / pageH));
+  const sliceH = Math.ceil(height / count);
+  const slices: Array<{ top: number; height: number }> = [];
+  let top = 0;
+  while (top < height) {
+    const h = Math.min(sliceH, height - top);
+    slices.push({ top, height: h });
+    top += h;
+  }
+  return slices;
+}
+
 export interface CanvasTilePlan {
   index: number;
   width: number;
