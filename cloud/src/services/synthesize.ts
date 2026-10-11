@@ -121,6 +121,6 @@ export async function synthesizeAcrossImages(
     { role: 'user', content: buildUserPrompt(items) },
   ];
 
-  const result = await chat(messages, { maxTokens: 6144, temperature: 0.3 });
+  const result = await chat(messages, { maxTokens: 16384, temperature: 0.3 });
   return result?.trim() || 'Synthesis failed.';
 }

@@ -14,14 +14,14 @@
 
 import {
   MESSAGE_TARGETS,
-  type CaptureFocusPartRequest,
-  type CaptureFocusPartResponse,
   type CaptureResultBundle,
+  type ExtractedList,
   type CaptureSessionGetRequest,
   type CaptureSessionGetResponse,
   type CaptureSessionReleaseRequest,
 } from '../utils/messages';
 import { getCaptureImage } from '../utils/capture_store';
+import { planReadableSlices } from '../utils/canvas_constraints';
 import { buildZip } from '../utils/zip';
 import {
   loadApiSettings,
@@ -41,15 +41,25 @@ interface PageState {
   fullBundle: CaptureResultBundle | null;
   part: number | null;
   parts: number | null;
+  selectedIndex: number;
   rendered: RenderedImage[];
   apiSettings: ApiSettings;
 }
+
+const ICONS = {
+  pdf: '<svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8zm-1 1.5L18.5 9H13z"/></svg>',
+  png: '<svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M19 5H5a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2m-1.5 12H6.5l3.2-4.1 2.3 2.9 1.6-2 3.9 3.2"/></svg>',
+  ocr: '<svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M4 5h16v2H4zm0 4h10v2H4zm0 4h16v2H4zm0 4h10v2H4z"/></svg>',
+  analyze:
+    '<svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M12 3 9.5 8.5 4 9.2l4.2 3.8L7 19l5-2.8L17 19l-1.2-6L20 9.2 14.5 8.5z"/></svg>',
+};
 
 const state: PageState = {
   bundle: null,
   fullBundle: null,
   part: null,
   parts: null,
+  selectedIndex: 0,
   rendered: [],
   apiSettings: { baseUrl: '', apiKey: '' },
 };
@@ -60,10 +70,6 @@ async function main(): Promise<void> {
   const params = new URLSearchParams(window.location.search);
   const id = params.get('id');
   const sourceUrl = params.get('url') ?? '';
-  const part = parsePositiveInt(params.get('part'));
-  const parts = parsePositiveInt(params.get('parts'));
-  state.part = part;
-  state.parts = parts;
   setSourceLabel(sourceUrl);
 
   state.apiSettings = await loadApiSettings();
@@ -80,14 +86,12 @@ async function main(): Promise<void> {
   try {
     const fullBundle = await fetchBundle(id);
     state.fullBundle = fullBundle;
-    const bundle = sliceBundleForPart(fullBundle, part, parts);
-    state.bundle = bundle;
-    document.title =
-      bundle.images.length === 1 && parts && parts > 1 && part
-        ? `Voiceido — ${fullBundle.baseName} (${part}/${parts})`
-        : `Voiceido — ${bundle.baseName}`;
-    renderFolderNav(fullBundle, part, parts);
-    await renderImages(bundle, part, parts);
+    state.bundle = fullBundle;
+    state.parts = fullBundle.images.length;
+    state.part = 1;
+    document.title = `Voiceido — ${fullBundle.baseName}`;
+    renderContentsRail(fullBundle);
+    await renderBook(fullBundle);
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Unknown error';
     showError('Could not load capture.', message);
@@ -115,78 +119,19 @@ async function fetchBundle(id: string): Promise<CaptureResultBundle> {
   return response.bundle;
 }
 
-async function renderImages(
-  bundle: CaptureResultBundle,
-  part: number | null,
-  parts: number | null,
-): Promise<void> {
-  const stack = mustGet<HTMLDivElement>('image-stack');
-  stack.innerHTML = '';
-  stack.removeAttribute('aria-busy');
-
-  const info = mustGet<HTMLDivElement>('page-info');
-  if (part && parts && parts > 1) {
-    info.textContent = `You are on part ${part} of ${parts}. Click another file in the folder to jump to that tab.`;
-    info.hidden = false;
-  } else if (bundle.images.length > 1) {
-    info.textContent = `Captured in ${bundle.images.length} images (split at the canvas size limit so text stays readable).`;
-    info.hidden = false;
-  }
-
+async function renderBook(bundle: CaptureResultBundle): Promise<void> {
   state.rendered = [];
   for (let i = 0; i < bundle.images.length; i++) {
     const meta = bundle.images[i];
     if (!meta) continue;
     const blob = await getCaptureImage(bundle.id, meta.index);
-    const url = URL.createObjectURL(blob);
-
-    const img = new Image();
-    img.alt =
-      part && parts
-        ? `Capture part ${part} of ${parts}`
-        : `Capture ${i + 1} of ${bundle.images.length}`;
-    img.src = url;
-    stack.appendChild(img);
-
-    state.rendered.push({
-      width: meta.width,
-      height: meta.height,
-      blob,
-    });
+    state.rendered.push({ width: meta.width, height: meta.height, blob });
   }
-}
-
-function parsePositiveInt(raw: string | null): number | null {
-  if (!raw) return null;
-  const n = Number.parseInt(raw, 10);
-  return Number.isFinite(n) && n > 0 ? n : null;
-}
-
-/**
- * When the worker opened one HTML tab per strip, keep existing download /
- * OCR / Analyze logic but only on this tab's slice.
- */
-function sliceBundleForPart(
-  bundle: CaptureResultBundle,
-  part: number | null,
-  parts: number | null,
-): CaptureResultBundle {
-  if (!part || !parts || parts <= 1) return bundle;
-  const index = part - 1;
-  const image = bundle.images[index];
-  if (!image) {
-    throw new Error(`Capture part ${part} of ${parts} is missing.`);
-  }
-  const pad = String(parts).length;
-  return {
-    ...bundle,
-    baseName: `${bundle.baseName}-${String(part).padStart(pad, '0')}`,
-    images: [image],
-  };
+  renderCatalog(bundle);
 }
 
 function showError(title: string, detail: string): void {
-  const stack = mustGet<HTMLDivElement>('image-stack');
+  const stack = mustGet<HTMLDivElement>('catalog-track');
   stack.innerHTML = '';
   const box = document.createElement('div');
   box.className = 'error';
@@ -218,85 +163,347 @@ function setSourceLabel(rawUrl: string): void {
 // Toolbar wiring
 // ---------------------------------------------------------------------------
 
-function renderFolderNav(
-  fullBundle: CaptureResultBundle,
-  part: number | null,
-  parts: number | null,
-): void {
-  const rail = mustGet<HTMLElement>('folder-rail');
-  const list = mustGet<HTMLDivElement>('folder-list');
+function renderContentsRail(fullBundle: CaptureResultBundle): void {
+  const rail = mustGet<HTMLElement>('browse-rail');
   const meta = mustGet<HTMLSpanElement>('folder-meta');
   const allActions = mustGet<HTMLElement>('all-actions');
-  const total = parts && parts > 1 ? parts : fullBundle.images.length;
-  if (total <= 1) {
+  const savePhotos = mustGet<HTMLButtonElement>('btn-list-photos');
+  const extracted = fullBundle.list;
+  const photoCount = extracted?.items.reduce((n, item) => n + item.images.length, 0) ?? 0;
+  const hasContents = Boolean(extracted && extracted.items.length > 0);
+  allActions.hidden = fullBundle.images.length <= 1;
+  if (!hasContents) {
     rail.hidden = true;
-    allActions.hidden = true;
     return;
   }
-
   rail.hidden = false;
-  allActions.hidden = false;
-  const pad = String(total).length;
-  meta.textContent = `${total} HTML pages · you are on part ${part ?? 1}`;
-  list.innerHTML = '';
+  meta.textContent = `${extracted?.items.length ?? 0} items · ${photoCount} photos`;
+  renderContents(extracted);
+  savePhotos.hidden = photoCount === 0;
+}
 
-  for (let i = 1; i <= total; i++) {
-    const btn = document.createElement('button');
-    btn.type = 'button';
-    btn.className = `folder-item${i === part ? ' current' : ''}`;
-    btn.setAttribute('role', 'listitem');
-    if (i === part) btn.setAttribute('aria-current', 'page');
-    const name = document.createElement('span');
-    name.className = 'folder-item-name';
-    name.textContent = `Part ${String(i).padStart(pad, '0')}`;
-    const file = document.createElement('span');
-    file.className = 'folder-item-file';
-    file.textContent = `${fullBundle.baseName}-${String(i).padStart(pad, '0')}.html`;
-    btn.append(name, file);
-    btn.addEventListener('click', () => {
-      void focusPart(i);
-    });
-    list.appendChild(btn);
+function renderCatalog(bundle: CaptureResultBundle): void {
+  const track = mustGet<HTMLDivElement>('catalog-track');
+  track.innerHTML = '';
+  const total = bundle.images.length;
+  for (let i = 0; i < total; i++) {
+    const page = state.rendered[i];
+    const card = document.createElement('article');
+    card.className = 'catalog-card';
+    card.dataset.index = String(i);
+
+    const hit = document.createElement('button');
+    hit.type = 'button';
+    hit.className = 'catalog-hit';
+    hit.setAttribute('aria-label', `Preview page ${i + 1}`);
+    const img = document.createElement('img');
+    img.className = 'catalog-thumb';
+    img.alt = '';
+    if (page) img.src = URL.createObjectURL(page.blob);
+    hit.append(img);
+    hit.addEventListener('click', () => openPreview(i));
+
+    const num = document.createElement('span');
+    num.className = 'catalog-num';
+    num.textContent = String(i + 1);
+
+    const actions = document.createElement('div');
+    actions.className = 'catalog-actions';
+    actions.append(
+      catalogAction('PDF', ICONS.pdf, `Save page ${i + 1} as PDF`, () => savePagePdf(i)),
+      catalogAction('PNG', ICONS.png, `Save page ${i + 1} as PNG`, () => savePagePng(i)),
+      catalogAction('OCR', ICONS.ocr, `OCR page ${i + 1}`, () => savePageJob(i, 'ocr')),
+      catalogAction('Analyze', ICONS.analyze, `Analyze page ${i + 1}`, () => savePageJob(i, 'analyze')),
+    );
+
+    card.append(num, hit, actions);
+    track.appendChild(card);
   }
 }
 
-async function focusPart(part: number): Promise<void> {
-  if (!state.fullBundle) return;
-  if (part === state.part) return;
-  const request: CaptureFocusPartRequest = {
-    type: 'CAPTURE_FOCUS_PART',
-    target: MESSAGE_TARGETS.background,
-    id: state.fullBundle.id,
-    part,
-  };
-  const response = (await chrome.runtime.sendMessage(request)) as
-    | CaptureFocusPartResponse
-    | undefined;
-  if (!response?.ok) {
-    toast(response?.detail ?? 'Could not open that part.', 'error');
+function catalogAction(
+  label: string,
+  icon: string,
+  tip: string,
+  handler: () => void | Promise<void>,
+): HTMLButtonElement {
+  const btn = document.createElement('button');
+  btn.type = 'button';
+  btn.className = 'cat-act';
+  btn.dataset.tip = tip;
+  btn.setAttribute('aria-label', tip);
+  btn.innerHTML = `${icon}<span>${label}</span>`;
+  btn.addEventListener('click', (event) => {
+    event.stopPropagation();
+    void runWithBusy(btn, handler);
+  });
+  return btn;
+}
+
+function openPreview(index: number): void {
+  const page = pageImage(index);
+  state.selectedIndex = index;
+  state.part = index + 1;
+  for (const card of document.querySelectorAll<HTMLElement>('.catalog-card')) {
+    card.classList.toggle('current', Number(card.dataset.index) === index);
   }
+  const pop = mustGet<HTMLElement>('preview-pop');
+  const title = mustGet<HTMLSpanElement>('preview-pop-title');
+  const body = mustGet<HTMLElement>('preview-pop-body');
+  title.textContent = `Page ${index + 1} of ${state.rendered.length}`;
+  body.innerHTML = '';
+  const sheet = document.createElement('div');
+  sheet.className = 'preview-sheet';
+  const img = new Image();
+  img.alt = `Capture page ${index + 1}`;
+  img.src = URL.createObjectURL(page.blob);
+  sheet.appendChild(img);
+  body.appendChild(sheet);
+  pop.hidden = false;
+  document.body.classList.add('preview-open');
+  clearPreviewSmoke();
+}
+
+function closePreview(): void {
+  const pop = mustGet<HTMLElement>('preview-pop');
+  pop.hidden = true;
+  mustGet<HTMLElement>('preview-pop-body').innerHTML = '';
+  clearPreviewSmoke();
+  document.body.classList.remove('preview-open');
+}
+
+function clearPreviewSmoke(): void {
+  const smoke = document.getElementById('preview-smoke');
+  const jet = document.getElementById('preview-smoke-jet');
+  if (!smoke) return;
+  for (const puff of [...smoke.querySelectorAll('.preview-smoke-puff')]) {
+    puff.remove();
+  }
+  jet?.classList.remove('on');
+}
+
+function bindPreviewSmoke(): void {
+  const body = mustGet<HTMLElement>('preview-pop-body');
+  const smoke = mustGet<HTMLElement>('preview-smoke');
+  const jet = mustGet<HTMLElement>('preview-smoke-jet');
+  let lastTop = 0;
+  let lastAt = 0;
+  let jetTimer = 0;
+  body.addEventListener(
+    'scroll',
+    () => {
+      const now = performance.now();
+      const dy = body.scrollTop - lastTop;
+      const dt = Math.max(8, now - lastAt);
+      lastTop = body.scrollTop;
+      lastAt = now;
+      const range = body.scrollHeight - body.clientHeight;
+      if (range <= 0) return;
+      const thumbH = Math.max(28, (body.clientHeight / body.scrollHeight) * body.clientHeight);
+      const thumbTop = (body.scrollTop / range) * (body.clientHeight - thumbH);
+      const mid = thumbTop + thumbH / 2;
+      jet.style.top = `${mid}px`;
+      jet.classList.add('on');
+      window.clearTimeout(jetTimer);
+      jetTimer = window.setTimeout(() => jet.classList.remove('on'), 220);
+
+      const speed = Math.min(1, (Math.abs(dy) / dt) * 10);
+      const count = 1 + Math.round(speed * 5);
+      for (let i = 0; i < count; i++) {
+        const puff = document.createElement('span');
+        puff.className = 'preview-smoke-puff';
+        const streak = (i / count) * Math.sign(dy || 1) * Math.min(Math.abs(dy) * 0.12, 40);
+        puff.style.top = `${mid - streak}px`;
+        puff.style.setProperty('--drift', `${-36 - speed * 28 - Math.random() * 18}px`);
+        puff.style.setProperty('--rise', `${(Math.random() - 0.5) * 16}px`);
+        puff.style.setProperty('--scale', `${1.4 + speed * 0.9 + Math.random() * 0.3}`);
+        smoke.appendChild(puff);
+        puff.addEventListener('animationend', () => puff.remove());
+      }
+      while (smoke.querySelectorAll('.preview-smoke-puff').length > 36) {
+        smoke.querySelector('.preview-smoke-puff')?.remove();
+      }
+    },
+    { passive: true },
+  );
+}
+
+function renderContents(list: ExtractedList | undefined): void {
+  const cards = mustGet<HTMLDivElement>('list-cards');
+  const sub = mustGet<HTMLParagraphElement>('list-board-sub');
+  if (!list || list.items.length === 0) {
+    sub.textContent = 'No photos or items extracted from this section.';
+    cards.innerHTML = '';
+    return;
+  }
+  const photoCount = list.items.reduce((n, item) => n + item.images.length, 0);
+  sub.textContent = `${list.items.length} items · ${photoCount} photos`;
+  cards.innerHTML = '';
+  for (const item of list.items) {
+    const openUrl = itemOpenUrl(item);
+    const card = document.createElement(openUrl ? 'a' : 'article');
+    card.className = `list-card${openUrl ? ' is-openable' : ''}`;
+    if (card instanceof HTMLAnchorElement && openUrl) {
+      card.href = openUrl;
+      card.target = '_blank';
+      card.rel = 'noreferrer';
+      card.title = openUrl;
+    }
+
+    const thumb = document.createElement('div');
+    thumb.className = 'list-card-thumb';
+    const firstPhoto = item.images[0];
+    if (firstPhoto) {
+      const img = document.createElement('img');
+      img.src = firstPhoto.dataUrl || firstPhoto.url;
+      img.alt = firstPhoto.alt || item.title;
+      img.loading = 'lazy';
+      thumb.appendChild(img);
+      if (item.images.length > 1) {
+        const more = document.createElement('span');
+        more.className = 'list-card-more';
+        more.textContent = `+${item.images.length - 1}`;
+        thumb.appendChild(more);
+      }
+    } else {
+      thumb.classList.add('is-link');
+      thumb.textContent = '↗';
+    }
+
+    const body = document.createElement('div');
+    body.className = 'list-card-body';
+    const title = document.createElement('p');
+    title.className = 'list-card-title';
+    title.textContent = compactTitle(item.title);
+    body.appendChild(title);
+    const meta = document.createElement('p');
+    meta.className = 'list-card-meta';
+    if (item.href) {
+      meta.textContent = compactHost(item.href);
+    } else if (item.detail) {
+      meta.textContent = compactTitle(item.detail);
+    } else {
+      meta.textContent = item.images.length ? 'Photo' : 'Item';
+    }
+    body.appendChild(meta);
+
+    card.append(thumb, body);
+    cards.appendChild(card);
+  }
+}
+
+function itemOpenUrl(item: ExtractedList['items'][number]): string | undefined {
+  if (item.href && isNavigableUrl(item.href)) return item.href;
+  const image = item.images[0];
+  if (!image) return undefined;
+  if (isNavigableUrl(image.url)) return image.url;
+  if (image.dataUrl) return image.dataUrl;
+  return undefined;
+}
+
+function isNavigableUrl(url: string): boolean {
+  return url.startsWith('http://') || url.startsWith('https://') || url.startsWith('data:image/');
+}
+
+function compactTitle(raw: string): string {
+  return raw.replace(/\s+/g, ' ').trim().slice(0, 88);
+}
+
+function compactHost(href: string): string {
+  try {
+    const url = new URL(href);
+    const path = url.pathname.replace(/\/$/, '');
+    const short = path.length > 28 ? `${path.slice(0, 26)}…` : path;
+    return `${url.hostname.replace(/^www\./, '')}${short}`;
+  } catch {
+    return href.slice(0, 64);
+  }
+}
+
+function sanitizePathPart(raw: string): string {
+  const cleaned = raw
+    .replace(/[^A-Za-z0-9]+/g, '-')
+    .replace(/-+/g, '-')
+    .replace(/^-|-$/g, '')
+    .slice(0, 48);
+  return cleaned || 'item';
+}
+
+function extensionFromUrl(url: string): string {
+  try {
+    const path = new URL(url).pathname;
+    const match = /\.(avif|bmp|gif|jpe?g|png|webp)$/i.exec(path);
+    if (match?.[1]) return `.${match[1].toLowerCase().replace('jpeg', 'jpg')}`;
+  } catch {
+    /* ignore */
+  }
+  return '.jpg';
+}
+
+async function handleSaveListPhotos(): Promise<void> {
+  const list = state.fullBundle?.list;
+  const base = state.fullBundle?.baseName ?? 'capture';
+  if (!list || list.items.length === 0) {
+    throw new Error('No photos in Contents for this capture.');
+  }
+  const pad = String(list.items.length).length;
+  let saved = 0;
+  for (const item of list.items) {
+    const folder = `${base}-contents/${String(item.index + 1).padStart(pad, '0')}-${sanitizePathPart(item.title)}`;
+    for (let i = 0; i < item.images.length; i++) {
+      const image = item.images[i];
+      if (!image) continue;
+      const filename = `${folder}/${String(i + 1).padStart(2, '0')}${extensionFromUrl(image.url)}`;
+      await chrome.downloads.download({
+        url: image.url,
+        filename,
+        saveAs: false,
+        conflictAction: 'uniquify',
+      });
+      saved += 1;
+    }
+  }
+  toast(`Saved ${saved} list photos.`, 'success');
 }
 
 function bindToolbar(): void {
-  bindAction('btn-pdf', handleDownloadPdf);
-  bindAction('btn-image', handleDownloadImage);
-  bindAction('btn-ocr', () => handleCloudJob('ocr'));
-  bindAction('btn-analyze', () => handleCloudJob('analyze'));
   bindAction('btn-pdf-all', handleDownloadPdfAll);
   bindAction('btn-image-all', handleDownloadImagesZip);
   bindAction('btn-ocr-all', () => handleCloudJobAll('ocr'));
   bindAction('btn-analyze-all', () => handleCloudJobAll('analyze'));
+  bindAction('btn-list-photos', handleSaveListPhotos);
+  bindAction('btn-debug', handleDebugDump);
   bindAction('btn-settings', openSettings);
+  mustGet<HTMLButtonElement>('preview-pop-close').addEventListener('click', () => closePreview());
+  mustGet<HTMLElement>('preview-pop').addEventListener('click', (event) => {
+    const body = mustGet<HTMLElement>('preview-pop-body');
+    if (event.target === event.currentTarget || event.target === body) closePreview();
+  });
+  bindPreviewSmoke();
 
-  // Cmd/Ctrl+S → image, Cmd/Ctrl+P → PDF (preventDefault to avoid native).
   window.addEventListener('keydown', (e) => {
-    if (!(e.metaKey || e.ctrlKey)) return;
-    if (e.key === 's') {
+    if (e.key === 'Escape') {
+      closePreview();
+      return;
+    }
+    const popOpen = !mustGet<HTMLElement>('preview-pop').hidden;
+    if (e.metaKey || e.ctrlKey) {
+      if (e.key === 's') {
+        e.preventDefault();
+        void savePagePng(state.selectedIndex);
+      } else if (e.key === 'p') {
+        e.preventDefault();
+        void savePagePdf(state.selectedIndex);
+      }
+      return;
+    }
+    if (!popOpen) return;
+    if (e.key === 'ArrowRight' || e.key === 'ArrowDown') {
       e.preventDefault();
-      void handleDownloadImage();
-    } else if (e.key === 'p') {
+      openPreview(Math.min(state.selectedIndex + 1, state.rendered.length - 1));
+    } else if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') {
       e.preventDefault();
-      void handleDownloadPdf();
+      openPreview(Math.max(state.selectedIndex - 1, 0));
     }
   });
 
@@ -342,6 +549,47 @@ async function runWithBusy(
 // ---------------------------------------------------------------------------
 // Image download
 // ---------------------------------------------------------------------------
+
+async function handleDebugDump(): Promise<void> {
+  const bundle = state.fullBundle ?? state.bundle;
+  if (!bundle) throw new Error('No capture loaded.');
+  const dump = {
+    id: bundle.id,
+    sourceUrl: bundle.sourceUrl,
+    baseName: bundle.baseName,
+    capturedAt: bundle.capturedAt,
+    part: state.part,
+    parts: state.parts,
+    previewUrl: window.location.href,
+    images: bundle.images,
+    list: bundle.list
+      ? {
+          items: bundle.list.items.map((item) => ({
+            index: item.index,
+            title: item.title,
+            detail: item.detail,
+            href: item.href,
+            images: item.images.map((image) => ({
+              url: image.url.startsWith('data:') ? '(data URL)' : image.url,
+              alt: image.alt,
+              width: image.width,
+              height: image.height,
+              inlinedBytes: image.dataUrl
+                ? Math.ceil((image.dataUrl.length * 3) / 4)
+                : 0,
+            })),
+          })),
+        }
+      : null,
+  };
+  console.info('[voiceido debug]', dump);
+  const json = `${JSON.stringify(dump, null, 2)}\n`;
+  await downloadBlob(
+    `${bundle.baseName}.debug.json`,
+    new Blob([json], { type: 'application/json' }),
+  );
+  toast('Debug JSON saved. Details also logged to the console.', 'success');
+}
 
 async function downloadBlob(filename: string, blob: Blob): Promise<void> {
   const url = URL.createObjectURL(blob);
@@ -402,7 +650,7 @@ async function handleDownloadPdfAll(): Promise<void> {
     const item = images[i];
     if (!item) continue;
     toast(`PDF ${i + 1}/${images.length}…`);
-    const pdfBytes = buildPdfBytes([await pngToJpegPage(item)]);
+    const pdfBytes = buildPdfBytes(await pngToJpegPages(item));
     entries.push({
       name: `${partFileStem(i, images.length)}.pdf`,
       data: pdfBytes,
@@ -421,93 +669,62 @@ async function handleCloudJobAll(job: CloudJob): Promise<void> {
     return;
   }
   const images = await loadAllRendered();
-  const label = job === 'ocr' ? 'OCR' : 'Analyze';
-  const perImage: Array<{ index: number; text: string }> = [];
-  for (let i = 0; i < images.length; i++) {
-    const item = images[i];
-    if (!item) continue;
-    toast(`${label} ${i + 1}/${images.length}…`);
-    const text = await callCloudJob(job, item.blob);
-    perImage.push({ index: i + 1, text });
-  }
-
-  let synthesis = '';
-  if (job === 'analyze' && perImage.length > 1) {
-    toast('Analyze: synthesising across parts…');
-    synthesis = await callSynthesize(
-      perImage.map((p) => ({ index: p.index, analysis: p.text })),
-    ).catch((e: unknown) => {
-      console.warn('[analyze] synthesis failed', e);
-      return '';
-    });
-  }
-
-  const enc = new TextEncoder();
-  const entries = perImage.map((p, i) => ({
-    name: `${partFileStem(i, images.length)}.${job}.txt`,
-    data: enc.encode(p.text.trim() || `(${label} returned empty result)`),
-  }));
-  entries.push({
-    name: `${state.fullBundle?.baseName ?? 'capture'}.${job}.combined.txt`,
-    data: enc.encode(formatCombinedText(label, perImage, synthesis)),
-  });
-  const zip = buildZip(entries);
+  const zip = await runCloudJobZip(job, images, { includeContents: true });
   const base = state.fullBundle?.baseName ?? 'capture';
   await downloadBlob(`${base}-${job}.zip`, new Blob([zip as BlobPart], { type: 'application/zip' }));
-  toast(`${label}: saved ${perImage.length} files as zip.`, 'success');
+  toast(`${job === 'ocr' ? 'OCR' : 'Analyze'}: saved zip with images.`, 'success');
 }
 
-async function handleDownloadImage(): Promise<void> {
-  if (!state.bundle || state.rendered.length === 0) {
-    throw new Error('No image data loaded yet.');
+function pageImage(index: number): RenderedImage {
+  const item = state.rendered[index];
+  if (!item) throw new Error(`Page ${index + 1} is not loaded.`);
+  return item;
+}
+
+async function savePagePng(index: number): Promise<void> {
+  const item = pageImage(index);
+  const filename = `${partFileStem(index, state.rendered.length)}.png`;
+  const url = URL.createObjectURL(item.blob);
+  try {
+    await chrome.downloads.download({
+      url,
+      filename,
+      saveAs: false,
+      conflictAction: 'uniquify',
+    });
+    toast(`Saved ${filename}.`, 'success');
+  } finally {
+    setTimeout(() => URL.revokeObjectURL(url), 30_000);
   }
-  const { baseName } = state.bundle;
-  const total = state.rendered.length;
-  for (let i = 0; i < total; i++) {
-    const item = state.rendered[i];
-    if (!item) continue;
-    const filename = withIndex(`${baseName}.png`, i, total);
-    const url = URL.createObjectURL(item.blob);
-    try {
-      await chrome.downloads.download({
-        url,
-        filename,
-        saveAs: false,
-        conflictAction: 'uniquify',
-      });
-    } finally {
-      // Revoke a tick later so the download has time to start.
-      setTimeout(() => URL.revokeObjectURL(url), 30_000);
-    }
+}
+
+async function savePagePdf(index: number): Promise<void> {
+  const item = pageImage(index);
+  toast('Encoding PDF…');
+  const pdfBytes = buildPdfBytes(await pngToJpegPages(item));
+  await downloadBlob(
+    `${partFileStem(index, state.rendered.length)}.pdf`,
+    new Blob([pdfBytes as BlobPart], { type: 'application/pdf' }),
+  );
+  toast('PDF saved.', 'success');
+}
+
+async function savePageJob(index: number, job: CloudJob): Promise<void> {
+  if (!isApiConfigured(state.apiSettings)) {
+    toast('Configure the backend API first (gear icon).', 'error');
+    openSettings();
+    return;
   }
-  toast(total > 1 ? `Saved ${total} images.` : 'Image saved.', 'success');
+  const item = pageImage(index);
+  const zip = await runCloudJobZip(job, [item], { includeContents: false, pageOffset: index });
+  const stem = partFileStem(index, state.rendered.length);
+  await downloadBlob(`${stem}-${job}.zip`, new Blob([zip as BlobPart], { type: 'application/zip' }));
+  toast(`${job === 'ocr' ? 'OCR' : 'Analyze'}: saved zip.`, 'success');
 }
 
 // ---------------------------------------------------------------------------
 // PDF download — custom minimal builder, embeds JPEG bytes per page
 // ---------------------------------------------------------------------------
-
-async function handleDownloadPdf(): Promise<void> {
-  if (!state.bundle || state.rendered.length === 0) {
-    throw new Error('No image data loaded yet.');
-  }
-  toast('Encoding PDF…');
-  const pages = await Promise.all(state.rendered.map((r) => pngToJpegPage(r)));
-  const pdfBytes = buildPdfBytes(pages);
-  const blob = new Blob([pdfBytes as BlobPart], { type: 'application/pdf' });
-  const url = URL.createObjectURL(blob);
-  try {
-    await chrome.downloads.download({
-      url,
-      filename: `${state.bundle.baseName}.pdf`,
-      saveAs: false,
-      conflictAction: 'uniquify',
-    });
-    toast('PDF saved.', 'success');
-  } finally {
-    setTimeout(() => URL.revokeObjectURL(url), 30_000);
-  }
-}
 
 interface JpegPage {
   width: number;
@@ -525,7 +742,7 @@ interface JpegPage {
  *     `OffscreenCanvas.convertToBlob()` paths can on stale Chrome builds —
  *     which is what produced empty/blank pages in earlier revisions.
  */
-async function pngToJpegPage(r: RenderedImage): Promise<JpegPage> {
+async function pngToJpegPages(r: RenderedImage): Promise<JpegPage[]> {
   const url = URL.createObjectURL(r.blob);
   try {
     const img = await loadImage(url);
@@ -534,23 +751,35 @@ async function pngToJpegPage(r: RenderedImage): Promise<JpegPage> {
     if (!width || !height) {
       throw new Error('Capture image has zero dimensions.');
     }
-    const canvas = document.createElement('canvas');
-    canvas.width = width;
-    canvas.height = height;
-    const ctx = canvas.getContext('2d');
-    if (!ctx) throw new Error('2D canvas context unavailable.');
-    // /DCTDecode is alpha-less — flatten transparent pixels onto white so
-    // they don't render black when the JPEG is composited.
-    ctx.fillStyle = '#ffffff';
-    ctx.fillRect(0, 0, width, height);
-    ctx.drawImage(img, 0, 0, width, height);
-
-    const jpegBlob = await canvasToBlob(canvas, 'image/jpeg', 0.92);
-    const jpegBytes = new Uint8Array(await jpegBlob.arrayBuffer());
-    if (jpegBytes.length === 0) {
-      throw new Error('JPEG encoder returned empty buffer.');
+    const slices = planReadableSlices(width, height);
+    const pages: JpegPage[] = [];
+    for (const slice of slices) {
+      const canvas = document.createElement('canvas');
+      canvas.width = width;
+      canvas.height = slice.height;
+      const ctx = canvas.getContext('2d');
+      if (!ctx) throw new Error('2D canvas context unavailable.');
+      ctx.fillStyle = '#ffffff';
+      ctx.fillRect(0, 0, width, slice.height);
+      ctx.drawImage(
+        img,
+        0,
+        slice.top,
+        width,
+        slice.height,
+        0,
+        0,
+        width,
+        slice.height,
+      );
+      const jpegBlob = await canvasToBlob(canvas, 'image/jpeg', 0.92);
+      const jpegBytes = new Uint8Array(await jpegBlob.arrayBuffer());
+      if (jpegBytes.length === 0) {
+        throw new Error('JPEG encoder returned empty buffer.');
+      }
+      pages.push({ width, height: slice.height, jpegBytes });
     }
-    return { width, height, jpegBytes };
+    return pages;
   } finally {
     URL.revokeObjectURL(url);
   }
@@ -696,119 +925,247 @@ function buildPdfBytes(pages: JpegPage[]): Uint8Array {
 
 type CloudJob = 'ocr' | 'analyze';
 
-async function handleCloudJob(job: CloudJob): Promise<void> {
-  if (!state.bundle || state.rendered.length === 0) {
-    throw new Error('No image data loaded yet.');
-  }
-  if (!isApiConfigured(state.apiSettings)) {
-    toast('Configure the backend API first (gear icon).', 'error');
-    openSettings();
-    return;
-  }
-
+async function runCloudJobZip(
+  job: CloudJob,
+  images: RenderedImage[],
+  opts: { includeContents: boolean; pageOffset?: number },
+): Promise<Uint8Array> {
   const label = job === 'ocr' ? 'OCR' : 'Analyze';
-  toast(
-    state.rendered.length > 1
-      ? `${label}: processing ${state.rendered.length} images…`
-      : `${label}: contacting backend…`,
-  );
+  const enc = new TextEncoder();
+  const entries: Array<{ name: string; data: Uint8Array }> = [];
+  const sections: Array<{ source: string; text: string }> = [];
+  const totalPages = Math.max(state.rendered.length, images.length);
+  const pad = String(totalPages).length;
+  const offset = opts.pageOffset ?? 0;
 
-  // Per-image pass.
-  const perImage: Array<{ index: number; text: string }> = [];
-  for (let i = 0; i < state.rendered.length; i++) {
-    const item = state.rendered[i];
+  for (let i = 0; i < images.length; i++) {
+    const item = images[i];
     if (!item) continue;
-    const text = await callCloudJob(job, item.blob);
-    perImage.push({ index: i + 1, text });
-  }
-
-  // For Analyze with 2+ images, run the cross-image synthesis pass on the
-  // backend so the saved .txt opens with one unified essay covering every
-  // image, then keeps the per-image detail underneath.
-  let synthesis = '';
-  if (job === 'analyze' && perImage.length > 1) {
-    toast('Analyze: synthesising across images…');
-    synthesis = await callSynthesize(
-      perImage.map((p) => ({ index: p.index, analysis: p.text })),
-    ).catch((e: unknown) => {
-      console.warn('[analyze] synthesis failed', e);
-      return '';
+    const pageNo = offset + i + 1;
+    toast(`${label} page ${pageNo}…`);
+    const text = await callCloudJobOnCapture(job, item);
+    const meaningful = job === 'analyze' || hasMeaningfulOcr(text);
+    if (!meaningful) {
+      toast(`Page ${pageNo}: no readable text — skipped for OCR.`);
+      continue;
+    }
+    const stem = `pages/page-${String(pageNo).padStart(pad, '0')}`;
+    entries.push({
+      name: `${stem}.png`,
+      data: new Uint8Array(await item.blob.arrayBuffer()),
     });
-  }
-
-  const combined = formatCombinedText(label, perImage, synthesis);
-
-  const blob = new Blob([combined], { type: 'text/plain;charset=utf-8' });
-  const url = URL.createObjectURL(blob);
-  try {
-    await chrome.downloads.download({
-      url,
-      filename: `${state.bundle.baseName}.${job}.txt`,
-      saveAs: false,
-      conflictAction: 'uniquify',
+    entries.push({
+      name: `${stem}.${job}.txt`,
+      data: enc.encode(text.trim()),
     });
-    toast(`${label}: saved as .txt`, 'success');
-  } finally {
-    setTimeout(() => URL.revokeObjectURL(url), 30_000);
-  }
-}
-
-function formatCombinedText(
-  label: string,
-  perImage: Array<{ index: number; text: string }>,
-  synthesis: string,
-): string {
-  if (perImage.length === 0) return `(${label} returned empty result)`;
-
-  if (perImage.length === 1) {
-    return perImage[0]!.text.trim() || `(${label} returned empty result)`;
+    sections.push({ source: `${stem}.${job}.txt`, text: text.trim() });
   }
 
-  const total = perImage.length;
-  const sections: string[] = [];
-
-  if (synthesis.trim()) {
-    sections.push(
-      `===== UNIFIED ANALYSIS (essay across all ${total} images) =====`,
-      '',
-      synthesis.trim(),
-      '',
-      '===== Per-Image Detail =====',
-      '',
-    );
+  if (opts.includeContents) {
+    await appendContentsEntries(job, entries, sections);
   }
 
-  sections.push(
-    perImage
-      .map((p) => `--- Image ${p.index} of ${total} ---\n\n${p.text.trim()}`)
-      .join('\n\n'),
-  );
-
-  return sections.join('\n').trim() || `(${label} returned empty result)`;
-}
-
-async function callSynthesize(
-  items: Array<{ index: number; analysis: string }>,
-): Promise<string> {
-  const { baseUrl, apiKey } = state.apiSettings;
-  const endpoint = `${baseUrl}/api/analyze/synthesize`;
-  const res = await fetch(endpoint, {
-    method: 'POST',
-    headers: {
-      'X-API-Key': apiKey,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({ items }),
-  });
-  if (!res.ok) {
-    const text = await safeReadText(res);
+  if (entries.length === 0) {
     throw new Error(
-      `synthesize failed (${res.status} ${res.statusText})${text ? `: ${text}` : ''}`,
+      job === 'ocr'
+        ? 'OCR found no readable text in this capture.'
+        : `${label} returned no files.`,
     );
   }
-  const data = (await res.json()) as { synthesis?: string; error?: string };
-  if (data.error) throw new Error(data.error);
-  return data.synthesis ?? '';
+
+  const list = state.fullBundle?.list;
+  const combined = formatCombinedFromZip(
+    label,
+    sections,
+    opts.includeContents ? list : undefined,
+  );
+  const base = state.fullBundle?.baseName ?? state.bundle?.baseName ?? 'capture';
+  entries.push({
+    name: `${base}.${job}.combined.txt`,
+    data: enc.encode(combined),
+  });
+
+  toast(`${label}: zipping ${entries.length} files…`);
+  return buildZip(entries);
+}
+
+function hasMeaningfulOcr(text: string): boolean {
+  const normalized = text.replace(/\s+/g, ' ').trim();
+  if (normalized.length < 16) return false;
+  const letters = (normalized.match(/\p{L}/gu) ?? []).join('');
+  if (letters.length < 12) return false;
+  const words = normalized
+    .toLowerCase()
+    .split(/[^\p{L}\p{N}]+/u)
+    .filter((word) => word.length > 1);
+  if (words.length >= 8) return true;
+  const unique = new Set(words);
+  if (unique.size <= 1 && letters.length < 48) return false;
+  return words.length >= 3;
+}
+
+async function appendContentsEntries(
+  job: CloudJob,
+  entries: Array<{ name: string; data: Uint8Array }>,
+  sections: Array<{ source: string; text: string }>,
+): Promise<void> {
+  const list = state.fullBundle?.list;
+  if (!list || list.items.length === 0) return;
+
+  const enc = new TextEncoder();
+  entries.push({
+    name: 'contents/index.txt',
+    data: enc.encode(formatContentsIndex(list)),
+  });
+
+  const photos: Array<{ path: string; blob: Blob; title: string }> = [];
+  const itemPad = String(list.items.length).length;
+  for (const item of list.items) {
+    const folder = `${String(item.index + 1).padStart(itemPad, '0')}-${sanitizePathPart(item.title)}`;
+    for (let i = 0; i < item.images.length; i++) {
+      const image = item.images[i];
+      if (!image?.dataUrl) continue;
+      const blob = blobFromDataUrl(image.dataUrl);
+      if (!blob) continue;
+      const ext = extensionFromMime(blob.type) || extensionFromUrl(image.url);
+      photos.push({
+        path: `contents/${folder}/${String(i + 1).padStart(2, '0')}${ext}`,
+        blob,
+        title: image.alt || item.title,
+      });
+    }
+  }
+
+  for (let i = 0; i < photos.length; i++) {
+    const photo = photos[i];
+    if (!photo) continue;
+    toast(`${job === 'ocr' ? 'OCR' : 'Analyze'} photo ${i + 1}/${photos.length}…`);
+    const bytes = new Uint8Array(await photo.blob.arrayBuffer());
+    let text = '';
+    try {
+      text = await callCloudJob(job, photo.blob);
+    } catch (error) {
+      console.warn(`[${job}] contents photo failed`, photo.path, error);
+      if (job === 'ocr') continue;
+      text = `${job} failed for this photo. The image is still included.`;
+    }
+    if (job === 'ocr' && !hasMeaningfulOcr(text)) {
+      continue;
+    }
+    entries.push({ name: photo.path, data: bytes });
+    const txtName = photo.path.replace(/\.[^.]+$/, `.${job}.txt`);
+    entries.push({ name: txtName, data: enc.encode(text.trim()) });
+    sections.push({ source: txtName, text: text.trim() });
+  }
+}
+
+function formatContentsIndex(list: ExtractedList): string {
+  const lines: string[] = [`${list.items.length} items in this section`, ''];
+  const pad = String(list.items.length).length;
+  for (const item of list.items) {
+    lines.push(`${String(item.index + 1).padStart(pad, '0')}. ${compactTitle(item.title)}`);
+    const detail = item.detail ? compactTitle(item.detail) : '';
+    if (detail && detail !== compactTitle(item.title)) lines.push(`   ${detail}`);
+    if (item.href && !item.href.startsWith('data:')) lines.push(`   ${item.href}`);
+    for (const image of item.images) {
+      const ref = publicPhotoRef(image.url);
+      if (ref) lines.push(`   photo: ${ref}`);
+      else lines.push('   photo: (embedded)');
+    }
+    lines.push('');
+  }
+  return lines.join('\n');
+}
+
+function publicPhotoRef(url: string): string | undefined {
+  if (!url || url.startsWith('data:') || url.startsWith('blob:')) return undefined;
+  return url;
+}
+
+function blobFromDataUrl(dataUrl: string): Blob | undefined {
+  const match = /^data:([^;,]+);base64,(.+)$/.exec(dataUrl);
+  if (!match?.[1] || !match[2]) return undefined;
+  try {
+    const binary = atob(match[2]);
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+    return new Blob([bytes], { type: match[1] });
+  } catch {
+    return undefined;
+  }
+}
+
+function extensionFromMime(mime: string): string {
+  if (mime.includes('png')) return '.png';
+  if (mime.includes('webp')) return '.webp';
+  if (mime.includes('gif')) return '.gif';
+  if (mime.includes('avif')) return '.avif';
+  if (mime.includes('bmp')) return '.bmp';
+  if (mime.includes('jpeg') || mime.includes('jpg')) return '.jpg';
+  return '';
+}
+
+function formatCombinedFromZip(
+  label: string,
+  sections: Array<{ source: string; text: string }>,
+  list: ExtractedList | undefined,
+): string {
+  const parts: string[] = [
+    `Voiceido ${label} — combined from this zip.`,
+    'This file concatenates the analyses already saved next to each image.',
+    'It is not a new essay.',
+    '',
+  ];
+  if (list && list.items.length > 0) {
+    parts.push('===== contents/index.txt =====', '', formatContentsIndex(list).trim(), '');
+  }
+  if (sections.length === 0) {
+    parts.push(`(${label} returned empty result)`);
+    return parts.join('\n').trim();
+  }
+  for (const section of sections) {
+    parts.push(`===== ${section.source} =====`, '', section.text.trim() || `(empty)`, '');
+  }
+  return parts.join('\n').trim();
+}
+
+async function callCloudJobOnCapture(job: CloudJob, image: RenderedImage): Promise<string> {
+  const slices = await sliceCaptureBlobs(image);
+  const parts: string[] = [];
+  for (let i = 0; i < slices.length; i++) {
+    const slice = slices[i];
+    if (!slice) continue;
+    if (slices.length > 1) {
+      toast(`${job === 'ocr' ? 'OCR' : 'Analyze'} band ${i + 1}/${slices.length}…`);
+    }
+    const text = (await callCloudJob(job, slice)).trim();
+    if (text) parts.push(text);
+  }
+  return parts.join('\n\n');
+}
+
+async function sliceCaptureBlobs(image: RenderedImage): Promise<Blob[]> {
+  const url = URL.createObjectURL(image.blob);
+  try {
+    const img = await loadImage(url);
+    const width = img.naturalWidth || image.width;
+    const height = img.naturalHeight || image.height;
+    const slices = planReadableSlices(width, height);
+    if (slices.length <= 1) return [image.blob];
+    const out: Blob[] = [];
+    for (const slice of slices) {
+      const canvas = document.createElement('canvas');
+      canvas.width = width;
+      canvas.height = slice.height;
+      const ctx = canvas.getContext('2d');
+      if (!ctx) throw new Error('2D canvas context unavailable.');
+      ctx.drawImage(img, 0, slice.top, width, slice.height, 0, 0, width, slice.height);
+      out.push(await canvasToBlob(canvas, 'image/png', 1));
+    }
+    return out;
+  } finally {
+    URL.revokeObjectURL(url);
+  }
 }
 
 async function callCloudJob(job: CloudJob, image: Blob): Promise<string> {
@@ -923,15 +1280,6 @@ function mustGet<T extends HTMLElement>(id: string): T {
   const el = document.getElementById(id) as T | null;
   if (!el) throw new Error(`Missing #${id}`);
   return el;
-}
-
-function withIndex(filename: string, index: number, total: number): string {
-  if (total <= 1) return filename;
-  const dot = filename.lastIndexOf('.');
-  const stem = dot === -1 ? filename : filename.slice(0, dot);
-  const ext = dot === -1 ? '' : filename.slice(dot);
-  const pad = String(total).length;
-  return `${stem}-${String(index + 1).padStart(pad, '0')}${ext}`;
 }
 
 let toastTimer: number | undefined;

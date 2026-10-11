@@ -50,7 +50,7 @@
   },
 
   "content_security_policy": {
-    "extension_pages": "script-src 'self'; object-src 'self'; base-uri 'self'; frame-ancestors 'none'; connect-src 'self' https://*.run.app https://*.a.run.app"
+    "extension_pages": "script-src 'self'; object-src 'self'; base-uri 'self'; frame-ancestors 'none'; img-src 'self' data: blob: https:; connect-src 'self' https://*.run.app https://*.a.run.app"
   },
 
   "web_accessible_resources": [

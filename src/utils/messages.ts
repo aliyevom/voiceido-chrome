@@ -246,6 +246,33 @@ export interface CaptureResultBundle {
     width: number;
     height: number;
   }>;
+  /**
+   * Inner-section list extraction (cards + full-size photo URLs). Omitted
+   * when the selected container is not a repeating list.
+   */
+  list?: ExtractedList;
+}
+
+export interface ExtractedListImage {
+  url: string;
+  alt: string;
+  width: number;
+  height: number;
+  /** Inlined bytes from the page (raster data URL) so Analyze/OCR zip can
+   *  include the photo without extra host permissions. */
+  dataUrl?: string;
+}
+
+export interface ExtractedListItem {
+  index: number;
+  title: string;
+  detail: string;
+  images: ExtractedListImage[];
+  href?: string;
+}
+
+export interface ExtractedList {
+  items: ExtractedListItem[];
 }
 
 /** Preview page → background: hand me the bundle for this session id. */
