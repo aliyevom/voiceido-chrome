@@ -545,6 +545,14 @@ body.preview-open {
   font-weight: 500;
 }
 
+.preview-pop-stage {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
 .preview-pop-body {
   flex: 1;
   min-height: 0;
@@ -586,6 +594,85 @@ body.preview-open {
 
 .preview-pop-body::-webkit-scrollbar-corner {
   background: #070b14;
+}
+
+.preview-smoke {
+  position: absolute;
+  top: 0;
+  right: 11px;
+  bottom: 0;
+  width: 132px;
+  pointer-events: none;
+  overflow: hidden;
+  z-index: 3;
+}
+
+.preview-smoke::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: 22px;
+  background: linear-gradient(
+    270deg,
+    rgba(34, 211, 238, 0.28) 0%,
+    rgba(59, 130, 246, 0.12) 38%,
+    transparent 100%
+  );
+  filter: blur(10px);
+}
+
+.preview-smoke-jet {
+  position: absolute;
+  right: -4px;
+  width: 108px;
+  height: 52px;
+  margin-top: -26px;
+  opacity: 0;
+  background: radial-gradient(
+    ellipse at 92% 50%,
+    rgba(236, 254, 255, 0.7) 0%,
+    rgba(34, 211, 238, 0.45) 22%,
+    rgba(59, 130, 246, 0.18) 52%,
+    transparent 74%
+  );
+  filter: blur(8px);
+  transform-origin: right center;
+  transition: opacity 160ms ease;
+}
+
+.preview-smoke-jet.on {
+  opacity: 1;
+}
+
+.preview-smoke-puff {
+  position: absolute;
+  right: 2px;
+  width: 26px;
+  height: 26px;
+  margin-top: -13px;
+  border-radius: 50%;
+  background: radial-gradient(
+    circle,
+    rgba(224, 242, 254, 0.85) 0%,
+    rgba(34, 211, 238, 0.4) 32%,
+    rgba(59, 130, 246, 0.16) 58%,
+    transparent 72%
+  );
+  filter: blur(7px);
+  animation: preview-exhaust 680ms ease-out forwards;
+}
+
+@keyframes preview-exhaust {
+  0% {
+    transform: translate(0, 0) scale(0.55);
+    opacity: 0.95;
+  }
+  100% {
+    transform: translate(var(--drift, -72px), var(--rise, 0px)) scale(var(--scale, 2.2));
+    opacity: 0;
+  }
 }
 
 .preview-sheet {

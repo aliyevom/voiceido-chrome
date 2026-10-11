@@ -261,13 +261,71 @@ function openPreview(index: number): void {
   body.appendChild(sheet);
   pop.hidden = false;
   document.body.classList.add('preview-open');
+  clearPreviewSmoke();
 }
 
 function closePreview(): void {
   const pop = mustGet<HTMLElement>('preview-pop');
   pop.hidden = true;
   mustGet<HTMLElement>('preview-pop-body').innerHTML = '';
+  clearPreviewSmoke();
   document.body.classList.remove('preview-open');
+}
+
+function clearPreviewSmoke(): void {
+  const smoke = document.getElementById('preview-smoke');
+  const jet = document.getElementById('preview-smoke-jet');
+  if (!smoke) return;
+  for (const puff of [...smoke.querySelectorAll('.preview-smoke-puff')]) {
+    puff.remove();
+  }
+  jet?.classList.remove('on');
+}
+
+function bindPreviewSmoke(): void {
+  const body = mustGet<HTMLElement>('preview-pop-body');
+  const smoke = mustGet<HTMLElement>('preview-smoke');
+  const jet = mustGet<HTMLElement>('preview-smoke-jet');
+  let lastTop = 0;
+  let lastAt = 0;
+  let jetTimer = 0;
+  body.addEventListener(
+    'scroll',
+    () => {
+      const now = performance.now();
+      const dy = body.scrollTop - lastTop;
+      const dt = Math.max(8, now - lastAt);
+      lastTop = body.scrollTop;
+      lastAt = now;
+      const range = body.scrollHeight - body.clientHeight;
+      if (range <= 0) return;
+      const thumbH = Math.max(28, (body.clientHeight / body.scrollHeight) * body.clientHeight);
+      const thumbTop = (body.scrollTop / range) * (body.clientHeight - thumbH);
+      const mid = thumbTop + thumbH / 2;
+      jet.style.top = `${mid}px`;
+      jet.classList.add('on');
+      window.clearTimeout(jetTimer);
+      jetTimer = window.setTimeout(() => jet.classList.remove('on'), 220);
+
+      const speed = Math.min(1, (Math.abs(dy) / dt) * 10);
+      const count = 1 + Math.round(speed * 5);
+      for (let i = 0; i < count; i++) {
+        const puff = document.createElement('span');
+        puff.className = 'preview-smoke-puff';
+        const streak = (i / count) * Math.sign(dy || 1) * Math.min(Math.abs(dy) * 0.12, 40);
+        puff.style.top = `${mid - streak}px`;
+        puff.style.setProperty('--drift', `${-56 - speed * 54 - Math.random() * 36}px`);
+        puff.style.setProperty('--rise', `${(Math.random() - 0.5) * 22}px`);
+        puff.style.setProperty('--scale', `${1.7 + speed * 1.6 + Math.random() * 0.4}`);
+        smoke.appendChild(puff);
+        puff.addEventListener('animationend', () => puff.remove());
+      }
+      while (smoke.querySelectorAll('.preview-smoke-puff').length > 36) {
+        smoke.querySelector('.preview-smoke-puff')?.remove();
+      }
+    },
+    { passive: true },
+  );
 }
 
 function renderContents(list: ExtractedList | undefined): void {
@@ -421,6 +479,7 @@ function bindToolbar(): void {
     const body = mustGet<HTMLElement>('preview-pop-body');
     if (event.target === event.currentTarget || event.target === body) closePreview();
   });
+  bindPreviewSmoke();
 
   window.addEventListener('keydown', (e) => {
     if (e.key === 'Escape') {
